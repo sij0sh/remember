@@ -12,8 +12,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from helper.envelope import LEVELS  # noqa: E402
+from helper.options import command_line  # noqa: E402
 SESSIONS = ROOT / "scripts/sessions.py"
 ROWS = ROOT / "scripts/rows.py"
+
+
+def split_line(line):
+    """Inverse of command_line: POSIX shell words, or the Windows argv parse."""
+    if os.name != "nt":
+        return shlex.split(line)
+    import ctypes
+    from ctypes import wintypes
+    parse = ctypes.windll.shell32.CommandLineToArgvW
+    parse.restype = ctypes.POINTER(wintypes.LPWSTR)
+    count = ctypes.c_int()
+    argv = parse(line, ctypes.byref(count))
+    try:
+        return [argv[i] for i in range(count.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
 
 
 def pi(role, body, mid, parent=None):
@@ -442,9 +459,9 @@ class HistoryTests(unittest.TestCase):
 
     def test_rows_views_join_without_saved_files(self):
         path = self.fixture()
-        sessions = shlex.join([sys.executable, str(SESSIONS)])
-        calls = f"{sessions} select {shlex.quote(str(path))} --kind tool_call --fields tool,result_ref,ref"
-        results = f"{sessions} select {shlex.quote(str(path))} --kind tool_result --fields text,ref"
+        select = [sys.executable, str(SESSIONS), "select", str(path)]
+        calls = command_line(select + ["--kind", "tool_call", "--fields", "tool,result_ref,ref"])
+        results = command_line(select + ["--kind", "tool_result", "--fields", "text,ref"])
         query = ("SELECT t0.tool, t1.text FROM t0 JOIN t1 "
                  "ON t0.result_ref->>'$.offset' = t1.ref->>'$.offset'")
         value, _ = self.run_cli(query, "--view", "calls=" + calls, "--view", "results=" + results, script=ROWS)
@@ -453,8 +470,10 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("FAILED", value["results"][0]["text"])
         self.assertEqual([(i["view"], i["alias"]) for i in value["scope"]["inputs"]],
                          [("calls", "t0"), ("results", "t1")])
+
+    @unittest.skipIf(os.name == "nt", "process substitution is POSIX-only")
+    def test_rows_accept_process_substitution(self):
         # Process substitution supplies named views too; stdin can be added with '-'.
-        raw = self.write("one.jsonl", [{"x": 1}])
         command = (f"{shlex.quote(sys.executable)} {shlex.quote(str(ROWS))} "
                    f"'SELECT t0.x, t1.y FROM t0, t1' - <(printf '[{{\"y\":2}}]')")
         result = subprocess.run(["/bin/bash", "-c", command], input=b'[{"x":1}]',
@@ -833,7 +852,7 @@ class PhaseOneTests(HistoryTests):
         self.assertIn("newer than supported", error["results"][0]["error"])
 
     def test_silent_producer_is_killed_at_deadline(self):
-        command = shlex.join([sys.executable, "-c", "import time; time.sleep(30)"])
+        command = command_line([sys.executable, "-c", "import time; time.sleep(30)"])
         started = __import__("time").monotonic()
         value, _ = self.run_cli("SELECT 1", "--view", "slow=" + command,
                                 "--producer-seconds", "0.5", script=ROWS, code=2)
@@ -953,7 +972,7 @@ class CoverageRecoveryTests(unittest.TestCase):
         self.assertEqual(selected["omissions"]["incomplete_reasons"]["events"], ["project_unknown"])
         self.assertTrue(selected["scope"]["scan_complete"])
         inspect = [n for n in selected["next"] if isinstance(n, dict) and n["purpose"].startswith("Inspect")]
-        self.assertEqual(shlex.split(inspect[0]["argv"])[-3:], ["--project", "", str(rootless.absolute())])
+        self.assertEqual(split_line(inspect[0]["argv"])[-3:], ["--project", "", str(rootless.absolute())])
 
     def test_next_reruns_with_the_limit_that_reads_everything(self):
         self.fixture()
@@ -961,15 +980,15 @@ class CoverageRecoveryTests(unittest.TestCase):
                                     pi("user", "y" * 4000, "u1")])
         value, _ = self.run_cli("overview", self.directory, "--max-candidates", 1, "--max-files", 1,
                                 "--max-bytes", 20000)
-        argv = {n["purpose"]: shlex.split(n["argv"]) for n in value["next"]}
+        argv = {n["purpose"]: split_line(n["argv"]) for n in value["next"]}
         self.assertEqual(argv["Read every discovery candidate"][-2:], ["--max-candidates", "2"])
         self.assertEqual(argv["Read every discovery candidate"].count("--max-candidates"), 1)
         value, _ = self.run_cli("overview", self.directory, "--max-files", 1, "--max-bytes", 20000)
-        argv = {n["purpose"]: shlex.split(n["argv"]) for n in value["next"]}
+        argv = {n["purpose"]: split_line(n["argv"]) for n in value["next"]}
         self.assertEqual(argv["Scan every selected recording"][-2:], ["--max-files", "2"])
         value, _ = self.run_cli("overview", self.directory, "--max-text-bytes", 100, "--max-bytes", 20000)
         self.assertFalse(value["scope"]["text_complete"])
-        rerun = {n["purpose"]: shlex.split(n["argv"]) for n in value["next"]}["Store full text for every scanned event"]
+        rerun = {n["purpose"]: split_line(n["argv"]) for n in value["next"]}["Store full text for every scanned event"]
         value, _ = self.run_cli(*rerun[2:])
         self.assertTrue(value["scope"]["text_complete"])
 
@@ -1043,14 +1062,14 @@ class CoverageRecoveryTests(unittest.TestCase):
         none, _ = self.run_cli("recurrence", self.directory, "--min-sessions", 5)
         self.assertEqual(none["results"], [])
         self.assertIn("fewer than 5", none["notes"][0])
-        self.assertEqual(shlex.split(none["next"][-1]["argv"])[-2:], ["--min-sessions", "1"])
+        self.assertEqual(split_line(none["next"][-1]["argv"])[-2:], ["--min-sessions", "1"])
         commands, _ = self.run_cli("recurrence", self.directory, "--by", "command", "--min-sessions", 1, "--examples", 1)
         self.assertEqual({r["key"]: r["sessions_independent"] for r in commands["results"]},
                          {"pnpm setup": 1, "enactry setup": 1, "cargo test": 1})
         self.assertEqual(commands["results"][0]["examples"][0]["failures"], 2)
         capped, _ = self.run_cli("recurrence", self.directory, "--text", "CREDENTIAL_MISSING", "--examples", 1)
         self.assertEqual(capped["results"][0]["examples_omitted"], 1)
-        rerun = shlex.split(capped["next"][-1]["argv"])
+        rerun = split_line(capped["next"][-1]["argv"])
         self.assertEqual(rerun[-2:], ["--examples", "2"])
 
     def test_codex_exec_wrapper_is_a_script_operation(self):

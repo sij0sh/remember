@@ -12,7 +12,7 @@ def load_profiles():
     """Harness name -> profile; adding a profile file adds a harness."""
     profiles = {}
     for path in sorted(PROFILE_DIR.glob("*.json")):
-        profile = json.loads(path.read_text())
+        profile = json.loads(path.read_text(encoding="utf-8"))
         profiles.setdefault(profile["harness"], profile)
     return profiles
 

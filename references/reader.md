@@ -11,8 +11,12 @@ a virtual environment when those optional capabilities are needed:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt          # Linux/macOS
+py -3 -m venv .venv; .venv\Scripts\python -m pip install -r requirements.txt   # Windows
 ```
+
+macOS: the Xcode `/usr/bin/python3` is 3.9; use Homebrew or python.org 3.11+.
+Windows: `rows.py` process substitution (`<(...)`) is unavailable; use `--view`.
 
 All commands expose `--help`. Graph schemas come from `remember.py describe`;
 historical event/view schemas from `sessions.py describe`. SQL dialects differ:

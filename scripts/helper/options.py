@@ -1,4 +1,7 @@
 """Explicit option objects shared by CLIs, discovery, and the reader."""
+import os
+import shlex
+import subprocess
 from dataclasses import dataclass
 
 # Defaults applied when a limit is omitted. A project filter reads every header cheaply, so
@@ -9,6 +12,11 @@ FILES_PROJECT = 25
 CANDIDATES_PROJECT = 20000
 TEXT_BYTES_DEFAULT = 8 * 1024 * 1024
 TEXT_BYTES_AUTO_CAP = 32 * 1024 * 1024
+
+
+def command_line(argv):
+    """argv as one command line quoted for this platform's shell, for ready-to-run hints."""
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
 
 
 @dataclass(frozen=True)

@@ -356,7 +356,10 @@ class GraphTests(unittest.TestCase):
         self.write("node_modules/a.py", "raise RuntimeError()\n")
         self.write("hidden/a.py", "x=1\n")
         self.write(".rememberignore", "hidden/\n")
-        (self.repo/"link.py").symlink_to(self.home/"outside.py")
+        try:
+            (self.repo/"link.py").symlink_to(self.home/"outside.py")
+        except OSError:
+            self.skipTest("symlinks need Windows Developer Mode or admin")
         (self.home/"outside.py").write_text("secret = 1\n")
         graph = self.graph()
         self.assertNotIn("node_modules/a.py", graph.files)

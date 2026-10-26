@@ -26,6 +26,9 @@ python3 "$S/sessions.py" select --include git --sql 'SELECT sha, subject FROM co
 ```
 
 Copy actual returned refs; the JSON above only illustrates argument quoting.
+`next[].argv` is quoted for the current platform (POSIX shell or Windows argv).
+Windows PowerShell 5.1 strips `"` from native arguments: use PowerShell 7+ or
+escape them as `\"`.
 `--project` defaults to the current directory; `--project ''` disables that filter.
 Explicit recording paths and `--harness` narrow inputs. `--root-map OLD=NEW`
 associates relocated repository paths without changing the recordings.

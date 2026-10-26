@@ -103,7 +103,8 @@ root-relative paths. Directory mode does not interpret `.gitignore`.
 
 Defaults: 20,000 files; 1 MiB/file; 32 MiB total. Non-UTF-8/binary files are hashed
 but not parsed. Oversize/unreadable files remain inventory entries. Cache defaults
-to `$XDG_CACHE_HOME/remember` or `~/.cache/remember`; `--cache DIR` must be outside
+to `$XDG_CACHE_HOME/remember`, else `%LOCALAPPDATA%\remember` on Windows, else
+`~/.cache/remember`; `--cache DIR` must be outside
 the source root. The retained evidence contains source text; no transcript import
 or automatic upload is performed.
 

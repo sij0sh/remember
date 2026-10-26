@@ -32,7 +32,7 @@ def default_recordings():
     """Harness -> archive paths, in settings order; user/env references are expanded."""
     configured = dict(FALLBACK_RECORDINGS)
     if SETTINGS.is_file():
-        data = json.loads(SETTINGS.read_text())
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
         recordings = data.get("recordings", {}) if isinstance(data, dict) else None
         if not isinstance(recordings, dict):
             raise ValueError(f"{SETTINGS}: 'recordings' must map harness names to paths")

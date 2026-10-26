@@ -11,6 +11,7 @@ use only the evidence that helps the decision.
 
 Set `S` to this skill's absolute `scripts` directory. Run from the source root,
 or pass `--repo DIR`. Graph tools need Python 3.11+; no packages or Git required.
+Windows: run `python` or `py -3` where examples say `python3`.
 
 | Command (`python3 "$S/remember.py" ...`) | Purpose |
 |---|---|

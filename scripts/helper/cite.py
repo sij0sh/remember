@@ -85,7 +85,7 @@ def lint(paths, repo, max_record=2 * 1024 * 1024):
     """Every citation in the given reports, checked; nothing is written."""
     rows = []
     for path in paths:
-        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8", errors="replace")
+        text = sys.stdin.buffer.read().decode("utf-8", "replace") if path == "-" else Path(path).read_text(encoding="utf-8", errors="replace")
         for number, line in enumerate(text.splitlines(), 1):
             covered = []
             def add(kind, m, state, note=None):

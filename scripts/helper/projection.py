@@ -1,10 +1,10 @@
 """One row schema and one projection path for display and SQL."""
 import json
-import shlex
 import sys
 from pathlib import Path
 
 from .envelope import clip
+from .options import command_line
 from .profiles import pointer
 from .records import RecordCache
 
@@ -65,7 +65,7 @@ def command(action, ref, **kwargs):
     argv = [sys.executable, str(sessions), action, "--ref", json.dumps(ref, separators=(",", ":"))]
     for k, v in kwargs.items():
         argv.extend(["--" + k.replace("_", "-"), str(v)])
-    return shlex.join(argv)
+    return command_line(argv)
 
 
 def next_for(e):

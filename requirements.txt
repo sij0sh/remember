@@ -1,5 +1,6 @@
 # Query engine for sessions.py select --sql and scripts/rows.py.
-# Install: python3 -m pip install --user --break-system-packages -r requirements.txt
+# Install into a venv (see references/reader.md), or on Linux/Homebrew without one:
+#   python3 -m pip install --user --break-system-packages -r requirements.txt
 # These pins require Python 3.11+; scan/search/describe work without them.
 duckdb==2.0.0
 pyarrow==26.0.0

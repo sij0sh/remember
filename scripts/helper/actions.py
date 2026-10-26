@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import sys
 from collections import Counter
 from pathlib import Path
@@ -17,7 +16,7 @@ from .enrichment import Repository
 from .envelope import LEVELS, clip
 from .options import (CANDIDATES_DEFAULT, CANDIDATES_PROJECT, FILES_DEFAULT, FILES_PROJECT,
                       TEXT_BYTES_AUTO_CAP, TEXT_BYTES_DEFAULT,
-                      DiscoveryOptions, ScanOptions)
+                      DiscoveryOptions, ScanOptions, command_line)
 from .projection import FIELDS, accepted, brief, clean, human, next_for, project_row
 from .profiles import PROFILES, content_text, detected, emitted_kinds, first, pointer
 from .records import RecordCache, new_scope, read_ref, records, safe_ref
@@ -41,7 +40,7 @@ def rerun(purpose, **flags):
                 kept.append(arg)
         argv = kept + [name, str(value)]
     # coverage marks a command the byte budget keeps, so an incomplete scan always shows its rerun.
-    return {"purpose": purpose, "argv": shlex.join([sys.executable, SESSIONS, *argv]), "coverage": True}
+    return {"purpose": purpose, "argv": command_line([sys.executable, SESSIONS, *argv]), "coverage": True}
 
 
 def _size(path):
@@ -65,7 +64,7 @@ def switched(action, drop=(), **flags):
             kept.append(arg)
     for flag, value in flags.items():
         kept += ["--" + flag.replace("_", "-")] + ([] if value is True else [str(value)])
-    return shlex.join([sys.executable, SESSIONS, *kept])
+    return command_line([sys.executable, SESSIONS, *kept])
 
 
 def all_requests(count):
@@ -118,7 +117,7 @@ def coverage_next(groups, scope):
     for g in groups:
         for path in g["scope"].get("project_unknown_files", [])[:1]:
             items.append({"purpose": "Inspect a recording with no recorded root",
-                          "argv": shlex.join([sys.executable, SESSIONS, "overview", "--project", "", path])})
+                          "argv": command_line([sys.executable, SESSIONS, "overview", "--project", "", path])})
     return items
 
 
@@ -818,7 +817,7 @@ def projects(args):
     scope["project_unknown"] = sum(r["recordings"] for r in found if r["root"] is None)
     next_items = coverage_next([], scope) + [
         {"purpose": "Overview of this recorded root",
-         "argv": shlex.join([sys.executable, SESSIONS, "overview", "--project", r["root"]])}
+         "argv": command_line([sys.executable, SESSIONS, "overview", "--project", r["root"]])}
         for r in rows if r["root"]][:1]
     return {"scope": scope, "matched": len(found), "grain": "one recorded root per harness",
             "results": rows, "omissions": {"selection": max(0, len(found) - len(rows))}, "next": next_items}
@@ -1006,7 +1005,7 @@ def run(args):
                                      + [n for n in found if n["purpose"] != "Read this recorded turn"][:1])
         if any(g["scope"].get("files_excluded_project") for g in groups):
             result["next"].append({"purpose": "List recorded project roots, including historical ones",
-                                   "argv": shlex.join([sys.executable, str(Path(__file__).resolve().parents[1]
+                                   "argv": command_line([sys.executable, str(Path(__file__).resolve().parents[1]
                                                                            / "sessions.py"), "projects"])})
         if not any(g["scope"]["files_scanned"] for g in groups):
             result["notes"] = ["No file matched the project filter; widen with --project '' or explicit recordings paths."

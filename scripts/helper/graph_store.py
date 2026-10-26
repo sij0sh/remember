@@ -40,7 +40,7 @@ def exclusions(root, extra):
     if path.is_file() and not path.is_symlink():
         if path.stat().st_size > 65536:
             raise ValueError(".rememberignore exceeds 64 KiB")
-        rules += [s.strip() for s in path.read_text().splitlines() if s.strip() and not s.lstrip().startswith("#")]
+        rules += [s.strip() for s in path.read_text(encoding="utf-8").splitlines() if s.strip() and not s.lstrip().startswith("#")]
     if any(r.startswith("!") for r in rules):
         raise ValueError("Exclusions are globs; negation (!) is not supported")
     return sorted(set(r.rstrip("/") for r in rules if r))
@@ -192,11 +192,18 @@ def producer_identity():
     return {"schema": SCHEMA, "python": platform.python_version(), "sources": sources, "packages": packages}
 
 
+def cache_home():
+    """$XDG_CACHE_HOME, else %LOCALAPPDATA% on Windows, else ~/.cache."""
+    base = os.environ.get("XDG_CACHE_HOME") or (os.environ.get("LOCALAPPDATA") if os.name == "nt" else None)
+    return Path(base) if base else Path.home()/".cache"
+
+
 class Store:
     def __init__(self, root, cache=None):
         self.root = str(Path(root).expanduser().resolve())
-        base = Path(cache).expanduser() if cache else Path(os.environ.get("XDG_CACHE_HOME", Path.home()/".cache"))/"remember"
-        self.path = base.resolve() / digest(self.root)
+        base = Path(cache).expanduser() if cache else cache_home()/"remember"
+        # Case-insensitive Windows paths name one workspace however they are spelled.
+        self.path = base.resolve() / digest(os.path.normcase(self.root))
         # Cache inside the input tree would contaminate future captures.
         if Path(self.root) == self.path or Path(self.root) in self.path.parents:
             raise ValueError("Use a cache directory outside the repository")
@@ -250,7 +257,7 @@ class Store:
         key = self.save("snapshot", body)
         fd, temp = tempfile.mkstemp(dir=self.path, prefix="lookup-")
         try:
-            with os.fdopen(fd, "w") as stream:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump({"snapshot": key}, stream)
             os.replace(temp, lookup)
         finally:
