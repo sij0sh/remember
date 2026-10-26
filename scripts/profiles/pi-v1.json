@@ -1,0 +1,471 @@
+{
+  "schema_version": "2",
+  "name": "pi",
+  "version": "3",
+  "harness": "pi",
+  "description": "Pi v3 session JSONL. All recorded branches remain in file order with entry/parent IDs. Messages, summaries, instructions, reasoning markers, configuration, lifecycle and attachments are preserved; toolResult pairs by exact toolCallId and explicit isError. read, edit, write, bash have deterministic semantics.",
+  "detect": [
+    [
+      {
+        "pointer": "/type",
+        "equals": "session"
+      }
+    ],
+    [
+      {
+        "pointer": "/type",
+        "equals": "message"
+      },
+      {
+        "pointer": "/message",
+        "exists": true
+      }
+    ]
+  ],
+  "timestamp": [
+    "/timestamp"
+  ],
+  "session": {
+    "external_id": [
+      "/id"
+    ],
+    "cwd": [
+      "/cwd"
+    ],
+    "when": [
+      {
+        "pointer": "/type",
+        "equals": "session"
+      }
+    ],
+    "parent": [
+      "/parentSession"
+    ]
+  },
+  "correlation": {
+    "external_message_id": [
+      "/id"
+    ],
+    "external_parent_id": [
+      "/parentId"
+    ]
+  },
+  "pairing": "call_id",
+  "representations": [],
+  "records": [
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compaction"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "compaction",
+      "text": "/summary",
+      "text_fallback": "/content",
+      "first_kept_id": "/firstKeptEntryId"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "branch_summary"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "branch",
+      "text": "/summary",
+      "text_fallback": "/content",
+      "first_kept_id": "/firstKeptEntryId"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "user"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "string"
+        }
+      ],
+      "emit": "user_message",
+      "text": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "user"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "array"
+        }
+      ],
+      "emit": "each",
+      "each": "/message/content",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "user_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "text": "/thinking",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "redacted_thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "state": "redacted",
+          "text_state": "redacted",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "image"
+            }
+          ],
+          "emit": "attachment",
+          "json": [
+            "/type",
+            "/mimeType"
+          ],
+          "purpose": "image"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "toolCall"
+            }
+          ],
+          "emit": "tool_call",
+          "call_id": "/id",
+          "tool": "/name",
+          "input": "/arguments"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "assistant"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "string"
+        }
+      ],
+      "emit": "assistant_message",
+      "text": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "assistant"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "array"
+        }
+      ],
+      "emit": "each",
+      "each": "/message/content",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "assistant_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "toolCall"
+            }
+          ],
+          "emit": "tool_call",
+          "call_id": "/id",
+          "tool": "/name",
+          "input": "/arguments"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "text": "/thinking",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "redacted_thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "state": "redacted",
+          "text_state": "redacted",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "image"
+            }
+          ],
+          "emit": "attachment",
+          "json": [
+            "/type",
+            "/mimeType"
+          ],
+          "purpose": "image"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "toolResult"
+        }
+      ],
+      "emit": "tool_result",
+      "call_id": "/message/toolCallId",
+      "exit_code": "/message/details/exitCode",
+      "succeeded_when": [
+        {
+          "pointer": "/message/isError",
+          "equals": false
+        }
+      ],
+      "failed_when": [
+        {
+          "pointer": "/message/isError",
+          "equals": true
+        }
+      ],
+      "content": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/message/role",
+          "equals": "system"
+        }
+      ],
+      "emit": "instruction",
+      "origin": "system",
+      "purpose": "system",
+      "text": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "session"
+        }
+      ],
+      "emit": "config",
+      "purpose": "session",
+      "json": [
+        "/id",
+        "/cwd",
+        "/version",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "model_change"
+        }
+      ],
+      "emit": "config",
+      "purpose": "model",
+      "json": [
+        "/provider",
+        "/modelId",
+        "/model",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "thinking_level_change"
+        }
+      ],
+      "emit": "config",
+      "purpose": "thinking_level",
+      "json": [
+        "/thinkingLevel",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "session_info"
+        }
+      ],
+      "emit": "config",
+      "purpose": "session_info",
+      "json": [
+        "/name",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "label"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "label",
+      "json": [
+        "/label",
+        "/targetId",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "custom"
+        }
+      ],
+      "emit": "config",
+      "purpose": "custom",
+      "json": [
+        "/customType",
+        "/data",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "custom_message"
+        }
+      ],
+      "emit": "user_message",
+      "origin": "harness",
+      "channel": "injected",
+      "purpose": "custom_message",
+      "text": "/content",
+      "text_fallback": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "context_edit"
+        }
+      ],
+      "emit": "context_change",
+      "purpose": "context_edit",
+      "json": [
+        "/targetId",
+        "/replacement",
+        "/messageId",
+        "/timestamp"
+      ],
+      "target_id": "/targetId",
+      "replacement": "/replacement"
+    }
+  ],
+  "tools": {
+    "read": {
+      "operation": "file_read",
+      "path": "/path"
+    },
+    "edit": {
+      "operation": "file_edit",
+      "path": "/path"
+    },
+    "write": {
+      "operation": "file_edit",
+      "path": "/path"
+    },
+    "bash": {
+      "operation": "command",
+      "command": "/command"
+    }
+  },
+  "guarantees": {
+    "user_messages": "exact",
+    "assistant_messages": "exact",
+    "tool_calls": "exact",
+    "tool_results": "exact",
+    "file_reads": "supported_tools_only",
+    "file_edits": "supported_tools_only",
+    "commands": "supported_tools_only",
+    "shell_side_effects": "unsupported"
+  }
+}

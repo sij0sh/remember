@@ -1,0 +1,807 @@
+{
+  "schema_version": "2",
+  "name": "codex",
+  "version": "4",
+  "harness": "codex",
+  "description": "Codex rollouts. Messages, summaries, instructions, reasoning states, lifecycle, usage, capabilities and configuration are preserved. Commands and file changes come from completed CommandExecution and FileChange items. Code-mode exec scripts stay tool calls with operation script; the commands they run are separate command rows.",
+  "detect": [
+    [
+      {
+        "pointer": "/type",
+        "in": [
+          "session_meta",
+          "response_item",
+          "event_msg",
+          "turn_context"
+        ]
+      }
+    ]
+  ],
+  "timestamp": [
+    "/timestamp"
+  ],
+  "correlation": {
+    "external_turn_id": [
+      "/payload/turn_id",
+      "/turn_id"
+    ],
+    "external_message_id": [
+      "/payload/item/id"
+    ],
+    "external_parent_id": [
+      "/payload/item/parent_id",
+      "/payload/parent_id"
+    ]
+  },
+  "session": {
+    "external_id": [
+      "/payload/id"
+    ],
+    "harness_version": [
+      "/payload/cli_version"
+    ],
+    "cwd": [
+      "/payload/cwd"
+    ],
+    "when": [
+      {
+        "pointer": "/type",
+        "equals": "session_meta"
+      }
+    ]
+  },
+  "pairing": "call_id",
+  "representations": [
+    "completed",
+    "response",
+    "event"
+  ],
+  "records": [
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compacted"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "compaction",
+      "text": "/summary",
+      "text_fallback": "/message",
+      "first_kept_id": "/firstKeptEntryId"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "ContextCompaction"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "compaction",
+      "text": "/payload/item/content",
+      "text_fallback": "/payload/item/summary",
+      "first_kept_id": "/firstKeptEntryId"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "UserMessage"
+        }
+      ],
+      "emit": "each",
+      "each": "/payload/item/content",
+      "representation": "completed",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "user_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "in": [
+                "image",
+                "local_image"
+              ]
+            }
+          ],
+          "emit": "attachment",
+          "json": [
+            "/type",
+            "/path"
+          ]
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "AgentMessage"
+        }
+      ],
+      "emit": "each",
+      "each": "/payload/item/content",
+      "representation": "completed",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "Text"
+            }
+          ],
+          "emit": "assistant_message",
+          "text": "/text"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "CommandExecution"
+        }
+      ],
+      "emit": "command",
+      "command": {
+        "pointer": "/payload/item/command",
+        "array": "last"
+      },
+      "cwd": {
+        "pointer": "/payload/item/cwd",
+        "strip_prefix": "file://"
+      },
+      "exit_code": "/payload/item/exit_code",
+      "content": "/payload/item/aggregated_output",
+      "failed_when": [
+        {
+          "pointer": "/payload/item/status",
+          "equals": "failed"
+        }
+      ],
+      "succeeded_when": [
+        {
+          "pointer": "/payload/item/status",
+          "equals": "completed"
+        },
+        {
+          "pointer": "/payload/item/exit_code",
+          "equals": 0
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "FileChange"
+        }
+      ],
+      "emit": "each",
+      "each_key": "/payload/item/changes",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "in": [
+                "add",
+                "update",
+                "delete"
+              ]
+            }
+          ],
+          "emit": "file_edit",
+          "path": "$key",
+          "failed_when": [
+            {
+              "pointer": "/payload/item/status",
+              "equals": "failed",
+              "scope": "record"
+            }
+          ],
+          "succeeded_when": [
+            {
+              "pointer": "/payload/item/status",
+              "equals": "completed",
+              "scope": "record"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "Reasoning"
+        },
+        {
+          "pointer": "/payload/item/encrypted_content",
+          "exists": true
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "state": "encrypted",
+      "text": "/payload/item/summary"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "Reasoning"
+        },
+        {
+          "pointer": "/payload/item/summary",
+          "exists": true
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "text": "/payload/item/summary"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "Reasoning"
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "state": "present"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "ImageView"
+        }
+      ],
+      "emit": "attachment",
+      "purpose": "image",
+      "json": [
+        "/payload/item"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "item_completed"
+        },
+        {
+          "pointer": "/payload/item/type",
+          "equals": "Extension"
+        }
+      ],
+      "emit": "tool_call",
+      "tool": "/payload/item/name",
+      "input": "/payload/item"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "in": [
+            "task_started",
+            "task_complete",
+            "turn_aborted",
+            "item_started",
+            "exec_command_begin",
+            "exec_command_end",
+            "patch_apply_begin",
+            "patch_apply_end"
+          ]
+        }
+      ],
+      "emit": "lifecycle",
+      "json": [
+        "/payload/type",
+        "/payload/turn_id",
+        "/payload/status",
+        "/payload/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "in": [
+            "token_count",
+            "token_usage_record"
+          ]
+        }
+      ],
+      "emit": "usage",
+      "json": [
+        "/payload/type",
+        "/payload/turn_id",
+        "/payload/total_token_usage",
+        "/payload/info"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "agent_reasoning"
+        }
+      ],
+      "emit": "reasoning",
+      "text": "/payload/text",
+      "text_fallback": "/payload/message"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "function_call"
+        }
+      ],
+      "emit": "tool_call",
+      "call_id": "/payload/call_id",
+      "tool": "/payload/name",
+      "input": {
+        "pointer": "/payload/arguments",
+        "decode": "json"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "custom_tool_call"
+        }
+      ],
+      "emit": "tool_call",
+      "call_id": "/payload/call_id",
+      "tool": "/payload/name",
+      "input": "/payload/input"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "in": [
+            "function_call_output",
+            "custom_tool_call_output"
+          ]
+        }
+      ],
+      "emit": "tool_result",
+      "call_id": "/payload/call_id",
+      "content": "/payload/output"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/payload/role",
+          "in": [
+            "system",
+            "developer"
+          ]
+        }
+      ],
+      "emit": "instruction",
+      "origin": "system",
+      "purpose": "instruction",
+      "text": {
+        "pointer": "/payload/content",
+        "join": "text_blocks"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/payload/role",
+          "equals": "user"
+        }
+      ],
+      "emit": "user_message",
+      "text": {
+        "pointer": "/payload/content",
+        "join": "text_blocks"
+      },
+      "representation": "response"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "message"
+        },
+        {
+          "pointer": "/payload/role",
+          "equals": "assistant"
+        }
+      ],
+      "emit": "assistant_message",
+      "text": {
+        "pointer": "/payload/content",
+        "join": "text_blocks"
+      },
+      "representation": "response"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "reasoning"
+        },
+        {
+          "pointer": "/payload/encrypted_content",
+          "exists": true
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "state": "encrypted",
+      "text": "/payload/summary"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "reasoning"
+        },
+        {
+          "pointer": "/payload/summary",
+          "exists": true
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "text": "/payload/summary"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "reasoning"
+        }
+      ],
+      "emit": "reasoning",
+      "origin": "assistant",
+      "state": "present"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "web_search_call"
+        }
+      ],
+      "emit": "tool_call",
+      "call_id": "/payload/call_id",
+      "tool": "web_search",
+      "input": "/payload/action"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "additional_tools"
+        }
+      ],
+      "emit": "capability",
+      "purpose": "additional_tools",
+      "json": [
+        "/payload/tools",
+        "/payload/types"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "response_item"
+        },
+        {
+          "pointer": "/payload/type",
+          "in": [
+            "image",
+            "input_image"
+          ]
+        }
+      ],
+      "emit": "attachment",
+      "purpose": "image",
+      "json": [
+        "/payload/type",
+        "/payload/path"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "user_message"
+        }
+      ],
+      "emit": "user_message",
+      "text": "/payload/message",
+      "representation": "event"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "event_msg"
+        },
+        {
+          "pointer": "/payload/type",
+          "equals": "agent_message"
+        }
+      ],
+      "emit": "assistant_message",
+      "text": "/payload/message",
+      "representation": "event"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "session_meta"
+        }
+      ],
+      "emit": "multi",
+      "events": [
+        {
+          "emit": "config",
+          "purpose": "session",
+          "json": [
+            "/payload/id",
+            "/payload/cwd",
+            "/payload/cli_version",
+            "/payload/timestamp"
+          ]
+        },
+        {
+          "when": [
+            {
+              "pointer": "/payload/base_instructions/text",
+              "exists": true
+            }
+          ],
+          "emit": "instruction",
+          "origin": "system",
+          "purpose": "base_instructions",
+          "text": "/payload/base_instructions/text"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "turn_context"
+        }
+      ],
+      "emit": "config",
+      "purpose": "turn_context",
+      "json": [
+        "/payload/cwd",
+        "/payload/approval_policy",
+        "/payload/sandbox_policy",
+        "/payload/model",
+        "/payload/effort"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "thread_settings_applied"
+        }
+      ],
+      "emit": "config",
+      "purpose": "thread_settings",
+      "json": [
+        "/payload/settings",
+        "/payload/model",
+        "/payload/approval_policy"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "world_state"
+        }
+      ],
+      "emit": "capability",
+      "purpose": "world_state",
+      "json": [
+        "/payload/state",
+        "/payload/cwd"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "token_usage_record"
+        }
+      ],
+      "emit": "usage",
+      "purpose": "tokens",
+      "json": [
+        "/payload/type",
+        "/payload/turn_id",
+        "/payload/total_token_usage",
+        "/payload/info"
+      ]
+    }
+  ],
+  "tools": {
+    "exec": {
+      "operation": "script"
+    }
+  },
+  "guarantees": {
+    "user_messages": "exact",
+    "assistant_messages": "exact",
+    "tool_calls": "exact",
+    "tool_results": "exact",
+    "file_reads": "unsupported",
+    "file_edits": "recorded_operations_only",
+    "commands": "recorded_operations_only",
+    "shell_side_effects": "unsupported"
+  }
+}

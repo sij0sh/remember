@@ -1,0 +1,513 @@
+{
+  "schema_version": "2",
+  "name": "claude-code",
+  "version": "4",
+  "harness": "claude-code",
+  "description": "Claude Code project transcripts. Messages, summaries, instructions, reasoning states, attachments, configuration, lifecycle and usage are preserved. tool_use pairs with tool_result by exact tool_use_id; is_error marks a failed result. api-request* records are marked unsupported, not decoded.",
+  "detect": [
+    [
+      {
+        "pointer": "/type",
+        "in": [
+          "user",
+          "assistant"
+        ]
+      }
+    ],
+    [
+      {
+        "pointer": "/sessionId",
+        "exists": true
+      }
+    ]
+  ],
+  "timestamp": [
+    "/timestamp"
+  ],
+  "correlation": {
+    "external_turn_id": [
+      "/turnId"
+    ],
+    "external_message_id": [
+      "/uuid"
+    ],
+    "external_parent_id": [
+      "/parentUuid"
+    ]
+  },
+  "session": {
+    "external_id": [
+      "/sessionId"
+    ],
+    "harness_version": [
+      "/version"
+    ],
+    "cwd": [
+      "/cwd"
+    ],
+    "when": [
+      {
+        "pointer": "/sessionId",
+        "type": "string"
+      }
+    ],
+    "parent": [
+      "/sessionId"
+    ],
+    "parent_when": [
+      {
+        "pointer": "/isSidechain",
+        "equals": true
+      }
+    ]
+  },
+  "pairing": "call_id",
+  "representations": [],
+  "records": [
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "summary"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "summary",
+      "text": "/summary"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "system"
+        },
+        {
+          "pointer": "/subtype",
+          "equals": "compact_boundary"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "compaction",
+      "text": "/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user"
+        },
+        {
+          "pointer": "/isMeta",
+          "equals": true
+        }
+      ],
+      "emit": "instruction",
+      "origin": "harness",
+      "channel": "injected",
+      "purpose": "meta",
+      "text": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user"
+        },
+        {
+          "pointer": "/isCompactSummary",
+          "equals": true
+        }
+      ],
+      "emit": "summary",
+      "purpose": "compaction",
+      "text": "/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "string"
+        }
+      ],
+      "emit": "user_message",
+      "text": "/message/content",
+      "cwd": "/cwd"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "array"
+        }
+      ],
+      "emit": "each",
+      "each": "/message/content",
+      "cwd": "/cwd",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "user_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "tool_result"
+            }
+          ],
+          "emit": "tool_result",
+          "call_id": "/tool_use_id",
+          "content": "/content",
+          "failed_when": [
+            {
+              "pointer": "/is_error",
+              "equals": true
+            }
+          ],
+          "succeeded_when": [
+            {
+              "pointer": "/is_error",
+              "not_equals": true
+            }
+          ]
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "in": [
+                "image",
+                "document"
+              ]
+            }
+          ],
+          "emit": "attachment",
+          "purpose": "image",
+          "json": [
+            "/type",
+            "/source"
+          ]
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "in": [
+                "thinking",
+                "redacted_thinking"
+              ]
+            }
+          ],
+          "emit": "reasoning",
+          "state": "present"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "assistant"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "string"
+        }
+      ],
+      "emit": "assistant_message",
+      "text": "/message/content",
+      "cwd": "/cwd"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "assistant"
+        },
+        {
+          "pointer": "/message/content",
+          "type": "array"
+        }
+      ],
+      "emit": "each",
+      "each": "/message/content",
+      "cwd": "/cwd",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "assistant_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "tool_use"
+            }
+          ],
+          "emit": "tool_call",
+          "call_id": "/id",
+          "tool": "/name",
+          "input": "/input"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "server_tool_use"
+            }
+          ],
+          "emit": "tool_call",
+          "call_id": "/id",
+          "tool": "/name",
+          "input": "/input"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "web_search_tool_result"
+            }
+          ],
+          "emit": "tool_result",
+          "call_id": "/tool_use_id",
+          "content": "/content"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "text": "/thinking",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "redacted_thinking"
+            }
+          ],
+          "emit": "reasoning",
+          "state": "redacted",
+          "text_state": "redacted",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "in": [
+                "image",
+                "document"
+              ]
+            }
+          ],
+          "emit": "attachment",
+          "purpose": "image",
+          "json": [
+            "/type",
+            "/source"
+          ]
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "attachment"
+        }
+      ],
+      "emit": "attachment",
+      "purpose": "attachment",
+      "text": "/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "in": [
+            "file-history-snapshot",
+            "file-history-delta"
+          ]
+        }
+      ],
+      "emit": "context_change",
+      "purpose": "file_history",
+      "json": [
+        "/type",
+        "/messageId",
+        "/snapshot"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "in": [
+            "system",
+            "mode",
+            "permission-mode"
+          ]
+        }
+      ],
+      "emit": "config",
+      "purpose": "configuration",
+      "json": [
+        "/type",
+        "/subtype",
+        "/content",
+        "/mode",
+        "/permissionMode"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "queue-operation"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "queue",
+      "json": [
+        "/type",
+        "/operation",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "cost-state"
+        }
+      ],
+      "emit": "usage",
+      "purpose": "cost",
+      "json": [
+        "/type",
+        "/cost",
+        "/tokens",
+        "/timestamp"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "last-prompt"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "last_prompt",
+      "text": "/prompt",
+      "text_fallback": "/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "in": [
+            "atis-latch",
+            "ai-title",
+            "custom-title",
+            "tag",
+            "agent-name",
+            "progress",
+            "artifact-comment-monitor",
+            "artifact-autoreact-ledger"
+          ]
+        }
+      ],
+      "emit": "config",
+      "purpose": "harness_state",
+      "json": [
+        "/type",
+        "/title",
+        "/name",
+        "/tag",
+        "/message"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "in": [
+            "api-request",
+            "api-request-blob",
+            "api-request-shape"
+          ]
+        }
+      ],
+      "emit": "config",
+      "purpose": "request_capture",
+      "state": "unsupported",
+      "text_state": "unsupported",
+      "json": [
+        "/type",
+        "/subtype"
+      ]
+    }
+  ],
+  "tools": {
+    "Read": {
+      "operation": "file_read",
+      "path": "/file_path"
+    },
+    "Edit": {
+      "operation": "file_edit",
+      "path": "/file_path"
+    },
+    "MultiEdit": {
+      "operation": "file_edit",
+      "path": "/file_path"
+    },
+    "Write": {
+      "operation": "file_edit",
+      "path": "/file_path"
+    },
+    "NotebookEdit": {
+      "operation": "file_edit",
+      "path": "/notebook_path"
+    },
+    "Bash": {
+      "operation": "command",
+      "command": "/command"
+    }
+  },
+  "guarantees": {
+    "user_messages": "exact",
+    "assistant_messages": "exact",
+    "tool_calls": "exact",
+    "tool_results": "exact",
+    "file_reads": "supported_tools_only",
+    "file_edits": "supported_tools_only",
+    "commands": "supported_tools_only",
+    "shell_side_effects": "unsupported"
+  }
+}

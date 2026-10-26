@@ -1,0 +1,12 @@
+interface:
+  display_name: Remember
+  short_description: Map code relationships and potential change impact
+  default_prompt: Use $remember to understand this repository and assess the proposed
+    change.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
