@@ -3,19 +3,21 @@
 Git and recordings are independent lanes. Only exact normalized paths, witnessed
 renames and caller-supplied relocation/split associations cross their boundary.
 """
+import bisect
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import commit_links, edit_hunks, git_file_history
+from . import cite, commit_links, edit_hunks, git_file_history
 from .actions import lineages
 from .discovery import candidate_files, normalized_root
 from .enrichment import parse_root_map, remap
 from .git_resolve import GitResolver
 from .options import DiscoveryOptions, ScanOptions, command_line
-from .projection import clean, next_for
+from .projection import clean, human, next_for
 from .reader import scan_file
 from .records import RecordCache
 
@@ -41,6 +43,78 @@ def attach(document, graph, targets, store):
         if row.get("id") in graph.nodes and row.get("kind") in ("file", "symbol"):
             row["history"] = continuation(graph, graph.nodes[row["id"]], store)
     return document
+
+
+# A follow-up that opens by rejecting or redirecting the prior work. A lead to expand, not a verdict.
+CORRECTION = re.compile(r"^\W*(no\b|nope\b|wrong\b|revert|undo\b|stop\b|actually\b|instead\b|that'?s not|not what|"
+                        r"why did you|don'?t\b|do not\b|this (broke|breaks|is broken)|still (fail|broken|wrong|not))"
+                        r"|\b(doesn'?t|didn'?t|does not|did not) work\b|\bbroke (it|the)\b|\bregress", re.IGNORECASE)
+# Strongest recorded support first; matches the per-row basis labels below.
+BASIS_RANK = {"recorded_definition_at_edit": 0, "recorded_text_matches_target_source": 0,
+              "exact_file_activity": 1, "symbol -> file": 1, "scoped_literal_mention": 2}
+# Pickaxe needs a distinctive literal; short names match unrelated text everywhere.
+PICKAXE_MIN = 4
+
+
+def when(value):
+    """ISO-8601 text for a recorded or committed time; epoch seconds or milliseconds are converted."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = value / 1000 if value > 1e11 else value
+        try:
+            return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    return value if isinstance(value, str) else ""
+
+
+def note(event):
+    """A recorded message as a short locator: enough to judge relevance before expanding it."""
+    return {"text": " ".join(str(event.get("text") or "").split())[:300], "timestamp": event.get("timestamp"),
+            "origin": "human" if human(event) else "delegated", "ref": event["ref"]}
+
+
+def intent(event, requests, humans, orders):
+    """The request that opened the event's turn, the next human message after it, and plain signals."""
+    request = event if event["kind"] == "user_message" else requests.get(event.get("turn"))
+    after = bisect.bisect_right(orders, event["order"])
+    following = humans[after] if after < len(humans) else None
+    signals = []
+    if event.get("outcome") == "failed":
+        signals.append("failed_edit" if event.get("operation") == "file_edit" else "failed_call")
+    if following and CORRECTION.search(str(following.get("text") or "")[:300]):
+        signals.append("possible_correction")
+    out = {"signals": signals}
+    if request:
+        out["request"] = note(request)
+    if following:
+        out["followup"] = note(following)
+    return out
+
+
+def refkey(ref):
+    return (ref["file"], ref["offset"], ref.get("item", 0))
+
+
+def tier(row):
+    """Intent first: corrected or failed work, then requested changes, then symbol-specific and file commits.
+
+    Reads and delegated requests come after commits: they show attention, not a decision.
+    """
+    signals = row.get("intent", {}).get("signals")
+    if row["category"] in ("recorded_activity", "text_mention"):
+        changed = row["category"] == "text_mention" or row["evidence"].get("operation") == "file_edit"
+        return 0 if signals else 1 if changed and row["intent"].get("request", {}).get("origin") == "human" else 4
+    if row["category"] == "git_change":
+        return 2 if row.get("pickaxe") else 3
+    return 5
+
+
+def rank(result):
+    """Tier, then basis, then newest first; the sorts are stable."""
+    result["results"].sort(key=lambda r: when(r.get("committed_at") or r.get("intent", {}).get("request", {}).get("timestamp")
+                                              or r.get("evidence", {}).get("timestamp")), reverse=True)
+    result["results"].sort(key=lambda r: (tier(r), BASIS_RANK.get(r["basis"], 3)))
+    return result
 
 
 def relative(value):
@@ -223,16 +297,34 @@ def run(args, store, get_graph):
                                       "committed_at": commit["committed_at"],
                                       "changes": [c for c in changes if c["sha"] == commit["sha"]],
                                       "next": {"argv": command_line(["git", "-C", repo, "show", commit["sha"], "--", path])}})
+    name = target.get("name") or str(target.get("qualname") or "").rpartition(".")[2]
+    if target["kind"] == "symbol" and current_repo and len(name) >= PICKAXE_MIN:
+        # Commits that added or removed the name anywhere: moved definitions and removed callers.
+        found, changes, coverage = git_file_history.history(resolver, current_repo, args.max_commits, pickaxe=name)
+        git_coverage.append({"repo": current_repo, "pickaxe": name, "basis": "symbol_name_pickaxe", **coverage,
+                             "state": "unavailable" if coverage.get("error") else "searched" if coverage["complete"] else "partial"})
+        listed = {r["ref"]: r for r in result["results"] if r["category"] == "git_change"}
+        for commit in found:
+            if commit["sha"] in listed:
+                listed[commit["sha"]]["pickaxe"] = name
+                continue
+            commits[(commit["repo_id"], commit["sha"])] = commit
+            result["results"].append({"category": "git_change", "basis": "symbol_name_pickaxe", "pickaxe": name,
+                                      "repo": current_repo, "ref": commit["sha"], "subject": commit["subject"],
+                                      "committed_at": commit["committed_at"],
+                                      "changes": [c for c in changes if c["sha"] == commit["sha"]],
+                                      "next": {"argv": command_line(["git", "-C", current_repo, "show", commit["sha"],
+                                                                     "-S", name])}})
     result["coverage"]["git"] = git_coverage
     result["scope"]["aliases"] = [{"absolute": k, **v} for k, v in aliases.items()]
     if args.no_sessions:
         result["coverage"]["sessions"] = {"state": "not_searched"}
-        return result
+        return rank(result)
     try:
         recordings, coverage = scan(args, store.root)
     except (ValueError, OSError) as error:
         result["coverage"]["sessions"] = {"state": "unavailable", "reason": str(error)}
-        return result
+        return rank(result)
     result["coverage"]["sessions"] = coverage
     roots = {r["file"]: r.get("root") for r in recordings}
     repository = TargetRepository(target, graph, store.root, aliases, roots, parse_root_map(args.root_map),
@@ -249,6 +341,14 @@ def run(args, store, get_graph):
         if target["kind"] == "symbol" and symbol["qualname"] == target["qualname"]:
             by_event.setdefault((symbol["recording_id"], symbol["event_id"]), []).append(symbol)
     for recording in recordings:
+        requests, humans = {}, []
+        for event in recording["events"]:
+            if event["kind"] == "user_message":
+                requests.setdefault(event.get("turn"), event)
+                if human(event):
+                    humans.append(event)
+        orders = [e["order"] for e in humans]
+        calls = {}
         mention_paths = []
         recorded_root = recording.get("root")
         if recorded_root:
@@ -274,11 +374,22 @@ def run(args, store, get_graph):
             basis = ("recorded_definition_at_edit" if any(s["basis"] == "at_edit" for s in match)
                      else "recorded_text_matches_target_source" if match else "symbol -> file" if direct and target["kind"] == "symbol"
                      else "exact_file_activity" if direct else "scoped_literal_mention")
+            hunks_here = hunks_by_event.get((event["recording_id"], event["event_id"]), [])
+            paired = calls.get(refkey(event["call_ref"])) if event["kind"] == "tool_result" and event.get("call_ref") else None
+            if paired:
+                # One row per exchange: the call row keeps the result's symbols, hunks and stronger basis.
+                paired["symbols"] += match
+                paired["hunks"] += hunks_here
+                if BASIS_RANK.get(basis, 9) < BASIS_RANK.get(paired["basis"], 9):
+                    paired["basis"] = basis
+                continue
             row = clean(event, SimpleNamespace(preview_chars=300))
-            result["results"].append({"category": "recorded_activity" if direct else "text_mention", "basis": basis,
-                                      "evidence": row, "symbols": match,
-                                      "hunks": hunks_by_event.get((event["recording_id"], event["event_id"]), []),
-                                      "ref": event["ref"], "next": next_for(event)})
+            entry = {"category": "recorded_activity" if direct else "text_mention", "basis": basis,
+                     "evidence": row, "intent": intent(event, requests, humans, orders), "symbols": match,
+                     "hunks": hunks_here, "ref": event["ref"], "next": next_for(event)}
+            if event["kind"] == "tool_call":
+                calls[refkey(event["ref"])] = entry
+            result["results"].append(entry)
     # Witnesses are joined by repository and SHA, never by timestamp or nearby edit.
     witnesses = commit_links.witnesses(recordings, resolver, cache)
     result["coverage"]["witnesses"] = {"scanned": len(witnesses),
@@ -289,22 +400,111 @@ def run(args, store, get_graph):
         if (witness["repo_id"], witness["sha"]) in commits:
             result["results"].append({"category": "commit_witness", "basis": witness["basis"], "evidence": witness,
                                       "ref": witness["ref"], "next": next_for({**witness, "kind": "tool_call"})})
-    result["results"].sort(key=lambda r: (0 if r["basis"] in ("recorded_definition_at_edit", "recorded_text_matches_target_source")
-                                          else 1 if r["category"] == "recorded_activity" and r["evidence"].get("operation") == "file_edit"
-                                          else 2 if r["category"] == "git_change" else 3 if r["category"] == "commit_witness"
-                                          else 4 if r["category"] == "recorded_activity" else 5))
-    return result
+    return rank(result)
+
+
+SESSIONS = Path(__file__).resolve().parents[1] / "sessions.py"
+# Default table columns for compact rows; --fields overrides.
+COMPACT_FIELDS = ["date", "source", "id", "text", "signals", "activity", "ref"]
+
+
+def locator(ref):
+    """A cite token when the recorded line is known; otherwise the JSON ref."""
+    return cite.token(ref) if ref.get("line") is not None else ref
+
+
+def compact(rows):
+    """One row per recorded turn or commit, in rank order; --verbose keeps event rows and their evidence."""
+    out, turns, commits = [], {}, {}
+    for row in rows:
+        if row["category"] == "git_change":
+            item = {"source": "git", "date": when(row.get("committed_at"))[:10], "id": row["ref"],
+                    "text": row["subject"][:160], "activity": f"{len(row.get('changes') or [])} files"}
+            if row.get("pickaxe"):
+                item["signals"] = ["pickaxe:" + row["pickaxe"]]
+            commits[row["ref"]] = item
+            out.append(item)
+            continue
+        if row["category"] == "commit_witness":
+            sha = row["evidence"].get("sha")
+            if sha in commits:
+                commits[sha].setdefault("recorded_in", cite.recording_id(row["ref"]["file"]))
+            else:
+                out.append({"source": "witness", "id": sha, "text": "commit recorded in a session",
+                            "ref": locator(row["ref"])})
+            continue
+        evidence, found = row["evidence"], row.get("intent", {})
+        key = (evidence.get("session"), evidence.get("turn") or refkey(row["ref"]))
+        item = turns.get(key)
+        if item is None:
+            request = found.get("request")
+            item = {"source": "session", "date": when((request or {}).get("timestamp") or evidence.get("timestamp"))[:10],
+                    "id": evidence.get("session"), "harness": evidence.get("harness"), "signals": [],
+                    "counts": {}, "ref": locator(request["ref"] if request else row["ref"])}
+            if request:
+                item["text"] = request["text"][:160]
+                if request["origin"] != "human":
+                    item["signals"].append("delegated_request")
+            turns[key] = item
+            out.append(item)
+        operation = (evidence.get("operation") or evidence.get("kind")) if row["category"] == "recorded_activity" else "mention"
+        item["counts"][operation] = item["counts"].get(operation, 0) + 1
+        item["signals"] += [s for s in found.get("signals", []) if s not in item["signals"]]
+        if "possible_correction" in found.get("signals", []) and "followup" not in item:
+            item["followup"] = found["followup"]["text"][:120]
+    for item in turns.values():
+        counts = item.pop("counts")
+        item["activity"] = ", ".join(f"{n} {op}" for op, n in sorted(counts.items(), key=lambda c: -c[1]))
+        if not item["signals"]:
+            del item["signals"]
+    return out
+
+
+def summary(coverage):
+    """Lane states and what limited them; --verbose returns every counter."""
+    sessions = coverage.get("sessions", {})
+    git = []
+    for lane in coverage.get("git", []):
+        entry = {"state": lane.get("state"), "path": lane.get("path")} if not lane.get("pickaxe") else \
+            {"state": lane.get("state"), "pickaxe": lane["pickaxe"]}
+        if lane.get("reason") or lane.get("error"):
+            entry["reason"] = lane.get("reason") or lane.get("error")
+        if lane.get("complete") is False and not entry.get("reason"):
+            entry["reason"] = f"commit limit {lane.get('commits_limit')}"
+        git.append(entry)
+    out = {"git": git, "sessions": sessions.get("state")}
+    for key in ("reason", "independent_sessions", "current_session_exclusion"):
+        if key in sessions:
+            out["sessions_" + key if key == "reason" else key] = sessions[key]
+    incomplete = [g["harness"] for g in sessions.get("groups", []) if not g.get("scan_complete") or not g.get("text_complete")]
+    if incomplete:
+        out["scan_incomplete"] = incomplete
+    if sessions.get("discovery_complete") is False:
+        out["discovery_incomplete"] = True
+    out["detail"] = "--verbose: every counter, alias, event row, hunk and expansion argv"
+    return out
 
 
 def deliver(document, args):
     """Bound output without persisting transcript text in graph reports."""
     from .graph_store import canonical
     from .graph_output import project_rows, render_table
-    rows = document["results"]
+    verbose = getattr(args, "verbose", False)
+    coverage = document.get("coverage", {})
+    partial = any(c.get("state") in ("partial", "unavailable") for c in coverage.get("git", []))
+    partial |= coverage.get("sessions", {}).get("state") in ("partial", "unavailable")
+    rows = document["results"] if verbose else compact(document["results"])
+    if not verbose:
+        document["coverage"] = summary(coverage)
+        scope = document.get("scope", {})
+        if "aliases" in scope:
+            scope["aliases"] = len(scope["aliases"])
+        document["expand"] = {"session": command_line([sys.executable, str(SESSIONS), "context", "--ref", "REF",
+                                                       "--mode", "exchange"]),
+                              "git": command_line(["git", "-C", document["scope"]["repo"], "show", "ID"])}
+    fields = getattr(args, "fields", None) or (COMPACT_FIELDS if not verbose and getattr(args, "format", None) == "table" else None)
     total = len(rows)
     document["results"] = project_rows(rows[args.offset:args.offset + args.limit], getattr(args, "fields", None))
-    partial = any(c.get("state") in ("partial", "unavailable") for c in document.get("coverage", {}).get("git", []))
-    partial |= document.get("coverage", {}).get("sessions", {}).get("state") in ("partial", "unavailable")
     def finish():
         following = args.offset + len(document["results"])
         document["delivery"] = {"total": total, "returned": len(document["results"]), "offset": args.offset,
@@ -322,4 +522,4 @@ def deliver(document, args):
     if len(canonical(document)) + 1 > args.max_bytes:
         document = {"operation": "history", "status": "partial", "results": [], "delivery": {"complete": False},
                     "next": {"action": "history", "target": args.target, "hint": "Increase --max-bytes; metadata exceeds budget."}}
-    print(render_table(document, getattr(args, "fields", None)) if getattr(args, "format", None) == "table" else canonical(document).decode())
+    print(render_table(document, fields) if getattr(args, "format", None) == "table" else canonical(document).decode())

@@ -240,8 +240,27 @@ def warnings(graph, root):
     for path, count in counts.most_common():
         if not total or count / total <= DOMINANT_SHARE:
             break
+        reason = graph.files.get(path, {}).get("generated")
         out.append({"kind": "dominant_file", "path": path, "nodes": count, "share": round(count / total, 3),
-                    "meaning": "Counts and rankings skew toward this file; exclude it if vendored or generated."})
+                    **({"generated": reason} if reason else {}),
+                    "meaning": "Generated or vendored; analyze leaves it out of rankings." if reason else
+                    "Counts and rankings skew toward this file; exclude it if vendored or generated."})
+    generated = sorted((p for p, n in graph.files.items() if n.get("generated")), key=lambda p: (-counts[p], p))
+    if generated:
+        out.append({"kind": "generated_files", "count": len(generated), "examples": generated[:5],
+                    "meaning": "Generated or vendored code; analyze rankings exclude it unless --include-generated."})
+    # Manifests name paths the capture lacks: ignored on disk, or missing outright.
+    missing = collections.defaultdict(list)
+    for gap in graph.body["gaps"]:
+        if gap.get("area") == "references":
+            missing[gap["target"]].append({"path": gap["path"], "line": gap["line"], "field": gap.get("field")})
+    for target, refs in sorted(missing.items()):
+        on_disk = os.path.exists(os.path.join(root, target))
+        out.append({"kind": "uncaptured_reference" if on_disk else "missing_reference", "path": target,
+                    "references": len(refs), "examples": refs[:5], "basis": "current disk", "source": "manifest",
+                    "meaning": ("A manifest names this ignored path; read it directly." if on_disk else
+                                "A manifest or CI file names this path, but it does not exist; the build step that "
+                                "uses it is likely broken or depends on a generator.")})
     captured = {p.split("/", 1)[0] for p in graph.files}
     try:
         missing = sorted(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False)
@@ -303,7 +322,38 @@ def changes(before, after):
     return rows
 
 
+def symbol_users(graph, symbols):
+    """Files that name a target symbol: a call into its span, an import line or a source mention."""
+    users = set()
+    spans = [(n["path"], n["line"], n["end_line"]) for n in symbols]
+    names = {n["name"] for n in symbols}
+    texts = {r["path"]: r["text"] for r in graph.body["source"]["files"] if r["text"] is not None}
+    for edge in graph.body["edges"]:
+        if edge["predicate"] not in DEPENDENCIES:
+            continue
+        source, target = graph.nodes[edge["source"]], graph.nodes[edge["target"]]
+        if edge["predicate"] == "CALLS_STATIC" and any(
+                target.get("path") == p and a <= (target.get("line") or 0) <= b for p, a, b in spans):
+            users.add(source.get("path"))
+        elif edge["predicate"] == "IMPORTS" and target.get("path") in {p for p, _, _ in spans} and edge.get("evidence"):
+            ev = edge["evidence"]
+            lines = (texts.get(ev["path"]) or "").splitlines()[ev["line"] - 1:ev["end_line"]]
+            if names & set(WORD.findall("\n".join(lines))):
+                users.add(source.get("path"))
+    for node in symbols:
+        users.update(m["path"] for m in graph.mentions(node["id"]))
+    return users
+
+
+def reach(row, users):
+    """direct: one hop and, for a symbol target, names it; file_only: one hop to another part of the file."""
+    if row["distance"] > 1:
+        return "indirect"
+    return "direct" if users is None or row.get("path") in users else "file_only"
+
+
 def impact(graph, targets, base=None, depth=2, max_nodes=1000, seconds=5.0):
+    symbols = []
     if base:
         if base.snapshot == graph.snapshot:
             raise ValueError("Impact comparison requires distinct captured snapshots")
@@ -314,6 +364,7 @@ def impact(graph, targets, base=None, depth=2, max_nodes=1000, seconds=5.0):
         for target in targets:
             node = graph.nodes[graph.unique(target)]
             if node["kind"] == "symbol":
+                symbols.append(node)
                 # Impact runs at file grain: every symbol in the file seeds the traversal.
                 widened.append({"target": target, "resolved": graph.public(node), "projected_to": node["path"]})
             for ident in graph.seeds(target, "file"):
@@ -338,6 +389,11 @@ def impact(graph, targets, base=None, depth=2, max_nodes=1000, seconds=5.0):
             rows, limits = current.walk(seeds, direction=direction, depth=depth, max_nodes=max_nodes,
                                         impact=True, seconds=seconds)
             traversals[side][direction] = limits
+            if direction == "in":
+                users = symbol_users(current, symbols) if symbols and current is graph else None
+                rows = [{**r, "reach": reach(r, users)} for r in rows]
+                order = {"direct": 0, "file_only": 1, "indirect": 2}
+                rows.sort(key=lambda r: order[r["reach"]])
             results.extend({**r, "role": role, "side": side} for r in rows)
             reached.update(r["id"] for r in rows)
             if direction == "in":
@@ -359,7 +415,10 @@ def impact(graph, targets, base=None, depth=2, max_nodes=1000, seconds=5.0):
             results.append({"kind": "verification", "side": side, "test": current.public(current.nodes[test]),
                             "evidence_refs": refs, "basis": "static_import_association", "execution": "not_run"})
         public = [current.public(n) for n in current.nodes.values() if n.get("public_candidate") and n.get("path") in paths]
+        tally = collections.Counter(r["reach"] for r in consumers)
         results.append({"kind": "risk_profile", "side": side, "possible_consumers": len(consumers),
+                        "direct_consumers": tally["direct"], "file_only_consumers": tally["file_only"],
+                        "indirect_consumers": tally["indirect"],
                         "test_candidates": len(tests), "public_symbol_candidates": public,
                         "unknowns_in_reached_files": sum(g.get("path") in paths for g in current.body["gaps"]),
                         "external_consumers": "unknown", "behavioral_effect": "not_verified",

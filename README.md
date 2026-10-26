@@ -46,7 +46,8 @@ sessions (first request, last agent claim, edited files) and last 3 non-merge
 commits (subject, files, lines, top paths), plus working-tree state. The primer
 is about 2 KB, excludes the current session, and is never retained. Use
 `map --no-primer` to omit it, `--primer-depth N` to change the window, or
-`map --format json --primer` for structured data. Other results default to JSON
+`map --format json --primer` for structured data; when the primer is skipped
+or byte-capped, output says `primer omitted`. Other results default to JSON
 (`--format table` gives compact rows; `--fields` selects columns). JSON is ready for an agent to inspect or another tool to consume. This abridged example shows a possible consumer and a candidate test:
 
 ```json
@@ -55,16 +56,16 @@ is about 2 KB, excludes the current session, and is never retained. Use
   "operation": "impact",
   "results": [
     {"kind": "change", "path": "src/store.py", "state": "planned"},
-    {"kind": "file", "path": "src/api.py", "role": "possible_consumer", "distance": 1},
+    {"kind": "file", "path": "src/api.py", "role": "possible_consumer", "reach": "direct", "distance": 1},
     {"kind": "verification", "test": {"path": "src/test_store.py"}, "execution": "not_run"},
-    {"kind": "risk_profile", "possible_consumers": 1, "test_candidates": 1}
+    {"kind": "risk_profile", "possible_consumers": 1, "direct_consumers": 1, "test_candidates": 1}
   ],
   "gaps": {"count": 0},
   "delivery": {"complete": true, "total": 4}
 }
 ```
 
-Full results also carry snapshot references and the relationship edges supporting each path. A `possible_consumer` is a static candidate, not proof of runtime use. Even a result with no reported gaps isn't a guarantee that a change is safe.
+Full results also carry snapshot references and the relationship edges supporting each path. A `possible_consumer` is a static candidate, not proof of runtime use; `reach` separates direct consumers from `file_only` (imports the file, not the symbol) and `indirect` ones. Even a result with no reported gaps isn't a guarantee that a change is safe.
 
 ## Questions remember helps answer
 
@@ -72,7 +73,8 @@ Full results also carry snapshot references and the relationship edges supportin
 |---|---|
 | What is in this repository? | `map` |
 | Where does this name appear? | `find TEXT --path GLOB --not-path GLOB` |
-| Which structural candidates deserve a closer read? | `analyze fanin`, `orphans`, `cycles`, `untested`, `largest` |
+| Which structural candidates deserve a closer read? | `analyze fanin`, `orphans`, `cycles`, `untested`, `largest` (generated/vendored code left out and listed) |
+| Which build or CI paths are broken? | `map` or `status`: `referenced but missing` lists manifest paths absent on disk |
 | What imports or calls this? | `neighbors TARGET --direction in` |
 | How are these two parts connected? | `paths A B` |
 | What could this change affect? | `impact TARGET` |
@@ -109,7 +111,7 @@ python3 "$S/remember.py" query --sql \
 
 ## Recover the history
 
-Source shows the current implementation. `history TARGET` brings back bounded Git and recording leads, with original-context expansion commands. Targeted graph results include a `history.next` continuation; retrieval is explicit and transcript text is not retained in graph reports. Bare `map` is the one exception: its recent-work primer reads a bounded head/tail sample of recent recordings and prints it transiently.
+Source shows the current implementation. `history TARGET` ranks prior requests, corrections, failed edits and commits (including `git log -S` for symbol names) as one compact row per recorded turn or commit, each with a ref to expand the original context. Targeted graph results include a `history.next` continuation; retrieval is explicit and transcript text is not retained in graph reports. Bare `map` is the one exception: its recent-work primer reads a bounded head/tail sample of recent recordings and prints it transiently.
 
 ```bash
 python3 "$S/remember.py" history src/retry.py

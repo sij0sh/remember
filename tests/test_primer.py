@@ -124,7 +124,8 @@ class PrimerTests(unittest.TestCase):
         self.init()
         self.recording(request="UNIQUE_PRIVATE_REQUEST text")
         plain = self.json_map()
-        self.assertNotIn("primer", plain)
+        self.assertTrue(plain["primer"].startswith("omitted:"))
+        self.assertIn("--primer", plain["primer"])
         full = self.json_map("--primer")
         self.assertEqual(len(full["primer"]["sessions"]), 1)
         self.assertEqual(full["primer"]["sessions"][0]["goal"], "UNIQUE_PRIVATE_REQUEST text")
@@ -173,7 +174,18 @@ class PrimerTests(unittest.TestCase):
         self.recording()
         snapshot = json.loads(self.cli("snapshot"))["results"][0]["snapshot"]
         out = json.loads(self.cli("map", "--format", "json", "--primer", "--snapshot", snapshot))
-        self.assertNotIn("primer", out)
+        self.assertIn("--snapshot", out["primer"])
+        self.assertNotIn("sessions", out)
+
+    def test_primer_shows_in_table_or_names_its_omission(self):
+        self.init()
+        self.recording(request="TABLE primer request")
+        table = self.cli("map", "--format", "table", "--primer")
+        self.assertIn("TABLE primer request", table)
+        self.assertIn("primer: omitted: --path", self.cli("map", "--format", "table"))
+        capped = json.loads(self.cli("map", "--format", "json", "--primer", "--max-bytes", "2048"))
+        self.assertTrue(capped["primer"].startswith("omitted: byte cap"))
+        self.assertTrue(capped["results"])
 
     def test_parent_root_fallback_finds_nested_project_recordings(self):
         parent = self.home / "parent"

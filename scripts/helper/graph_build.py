@@ -1,9 +1,10 @@
 """Evidence graph producers: syntax, import resolution and conservative Python calls."""
 import ast
 import collections
+import re
 from pathlib import PurePosixPath
 
-from . import import_targets, repo_files, syntax_calls
+from . import import_targets, manifest_refs, repo_files, syntax_calls
 from .graph_store import digest
 
 PREDICATES = {
@@ -12,6 +13,7 @@ PREDICATES = {
     "IMPORTS": "Literal import mapped by the documented resolver rule; not a call.",
     "CALLS_STATIC": "Python, TS/JS or Rust call (or construction) with one supported binding; not observed execution.",
     "TESTS": "Test file imports an implementation file; association, not assertion coverage.",
+    "REFERENCES": "Manifest or CI file names this path (package.json, tsconfig, Cargo.toml, workflow); not an import.",
 }
 DEPENDENCIES = ("IMPORTS", "CALLS_STATIC")
 
@@ -22,6 +24,50 @@ def is_test(path):
                 or p.name.endswith(("_test.py", "_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js")))
 
 
+# Folders and names that hold built, bundled or third-party code, not project source.
+GENERATED_DIRS = {"dist", "vendor", "vendored", "third_party", "third-party", "node_modules", "generated",
+                  "__generated__", ".next", ".nuxt", "bower_components"}
+GENERATED_NAMES = re.compile(r"(?:\.min\.[cm]?js|\.min\.css|\.bundle\.[cm]?js|_pb2(?:_grpc)?\.pyi?|\.pb\.go"
+                             r"|\.generated\.\w+|\.g\.dart)$")
+GENERATED_HEADER = re.compile(r"@generated|do not edit|code generated|auto-?generated|regenerate (?:it )?(?:with|by|using)",
+                              re.I)
+# Declaration files this long are host or library typings, not hand-written project types.
+LARGE_DECLARATION = 1000
+RUST_TEST_ATTR = re.compile(r"^\s*#\[(?:cfg\(test\)|(?:[\w:]+::)?test)\]")
+
+
+def generated(path, text):
+    """Why a file is generated or vendored, or None; such files are left out of rankings."""
+    p = PurePosixPath(path)
+    folder = next((part for part in p.parts[:-1] if part in GENERATED_DIRS), None)
+    if folder:
+        return f"folder:{folder}"
+    if GENERATED_NAMES.search(p.name):
+        return "name"
+    head = "\n".join((text or "").splitlines()[:10])
+    if GENERATED_HEADER.search(head):
+        return "header"
+    if p.name.endswith((".d.ts", ".d.mts", ".d.cts")) and (text or "").count("\n") >= LARGE_DECLARATION:
+        return "large_declaration_file"
+    return None
+
+
+def rust_test_ranges(text, rows):
+    """(line, end_line) of items under `#[cfg(test)]` or `#[test]`; attributes sit just above the item."""
+    lines = text.splitlines()
+    ranges = []
+    for item in rows:
+        if item["kind"] == "import":
+            continue
+        number = item["line"] - 2
+        while number >= 0 and lines[number].lstrip().startswith(("#[", "//", "///")):
+            if RUST_TEST_ATTR.match(lines[number]):
+                ranges.append((item["line"], item["end_line"]))
+                break
+            number -= 1
+    return ranges
+
+
 class Builder:
     def __init__(self, source):
         self.source = source
@@ -29,6 +75,7 @@ class Builder:
         self.files = {r["path"]: r for r in source["files"]}
         self.symbols = collections.defaultdict(list)
         self.unparsed = collections.Counter()  # non-code or unsupported languages: coverage, not gaps
+        self.inline = {}  # path -> [(line, end_line)] of inline Rust test items
 
     def node(self, kind, key, **fields):
         ident = "node:" + digest([kind, key])[:24]
@@ -65,6 +112,9 @@ class Builder:
                 parent = dirs[folder]
             node = self.node("file", path, path=path, name=PurePosixPath(path).name,
                              is_test=is_test(path), state=row["state"], digest=row["digest"])
+            reason = generated(path, row["text"])
+            if reason:
+                self.nodes[node]["generated"] = reason
             self.edge(parent, "CONTAINS", node, None, "inventory")
             if row["state"] != "read":
                 self.gap("source", row["state"], path)
@@ -79,13 +129,18 @@ class Builder:
             elif state != "parsed":
                 self.gap("parser", state, path, error=error, language=language)
             self.items.extend(rows)
+            tests = rust_test_ranges(row["text"], rows) if language == "rust" else []
+            if tests:
+                self.nodes[node]["inline_tests"] = len(tests)
+                self.inline[path] = tests
             for item in rows:
                 if item["kind"] == "import":
                     continue
                 key = f"{path}::{item['qualname']}:{item['kind']}:{item['line']}"
+                inline = any(a <= item["line"] <= b for a, b in tests)
                 sid = self.node("symbol", key, path=path, name=item["name"], qualname=item["qualname"],
                                 symbol_kind=item["kind"], line=item["line"], end_line=item["end_line"],
-                                is_test=is_test(path), language=language,
+                                is_test=is_test(path) or inline, language=language,
                                 public_candidate=not item["parent"] and not item["name"].startswith("_"))
                 self.symbols[(path, item["qualname"])].append(sid)
                 self.edge(node, "DECLARES", sid, self.evidence(path, item["line"], item["end_line"]), "syntax")
@@ -115,7 +170,8 @@ class Builder:
                 for target in targets:
                     self.edge(src, "IMPORTS", target, evidence, rule)
                     target_path = self.nodes[target].get("path")
-                    if is_test(row["path"]) and target_path and not is_test(target_path) and self.nodes[target]["kind"] == "file":
+                    inline = any(a <= row["line"] <= b for a, b in self.inline.get(row["path"], []))
+                    if (is_test(row["path"]) or inline) and target_path and not is_test(target_path) and self.nodes[target]["kind"] == "file":
                         self.edge(src, "TESTS", target, evidence, "test_file_import")
             else:
                 if state in ("standard_library", "not_in_repo"):
@@ -129,6 +185,25 @@ class Builder:
                 self.gap("imports", state, path, line, predicate="IMPORTS", text=module, rule=rule,
                          bindings=len(rows), candidates=[])
         return {"statements": dict(collections.Counter(key[3] for key in statements)), "bindings": bindings}
+
+    def references(self, dirs):
+        """REFERENCES edges from manifests and CI files; certain paths that match nothing become gaps."""
+        counts = collections.Counter()
+        for path, row in self.files.items():
+            if row["state"] != "read":
+                continue
+            for ref in manifest_refs.references(path, row["text"]):
+                target = ref["target"]
+                node = self.file_id(target) if target in self.files else dirs.get(target)
+                evidence = self.evidence(path, ref["line"])
+                if node:
+                    self.edge(self.file_id(path), "REFERENCES", node, evidence, "manifest_path")
+                    counts["resolved"] += 1
+                elif ref["strong"]:
+                    self.gap("references", "not_captured", path, ref["line"], predicate="REFERENCES",
+                             text=ref["text"], target=target, field=ref["field"])
+                    counts["not_captured"] += 1
+        return dict(counts)
 
     def calls(self):
         for path, row in self.files.items():
@@ -299,6 +374,7 @@ def build(source):
     builder = Builder(source)
     dirs = builder.structures()
     counts = builder.imports(dirs)
+    references = builder.references(dirs)
     builder.calls()
     if not source["inventory"]["complete"]:
         builder.gap("inventory", "incomplete_listing")
@@ -309,7 +385,7 @@ def build(source):
     return {"nodes": nodes, "edges": sorted(builder.edges.values(), key=lambda e: e["id"]), "gaps": gaps,
             "coverage": {"inventory_complete": source["inventory"]["complete"], "capture_stable": source["inventory"]["stable"],
                          "files": len(source["files"]), "nodes": len(nodes), "edges": len(builder.edges),
-                         "imports": counts, "gaps": dict(collections.Counter(g["area"] for g in gaps)),
+                         "imports": counts, "references": references, "gaps": dict(collections.Counter(g["area"] for g in gaps)),
                          "unparsed_files": dict(sorted(builder.unparsed.items())),
                          "call_producers": ["python_lexical_binding", "es_lexical_binding", "rust_lexical_binding"],
                          "limitations": ["Static candidates, not runtime behavior or a complete call graph.",

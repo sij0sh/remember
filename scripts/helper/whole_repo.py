@@ -43,9 +43,19 @@ def header(graph, warnings, skipped, primer=None):
     for w in warnings:
         if w["kind"] == "uncaptured_reference":
             refs = ", ".join(f"{r['path']}:{r['line']}" for r in w["examples"])
-            out.append(f"not captured but used: {w['path']}/ (referenced at {refs})")
+            slash = "" if w.get("source") == "manifest" else "/"
+            out.append(f"not captured but used: {w['path']}{slash} (referenced at {refs})")
+        elif w["kind"] == "missing_reference":
+            refs = ", ".join(f"{r['path']}:{r['line']}" for r in w["examples"])
+            out.append(f"referenced but missing: {w['path']} (named at {refs})")
+        elif w["kind"] == "dominant_file" and w.get("generated"):
+            out.append(f"dominant file: {w['path']} holds {w['share']:.0%} of nodes; generated ({w['generated']}), "
+                       "left out of analyze rankings")
         elif w["kind"] == "dominant_file":
             out.append(f"dominant file: {w['path']} holds {w['share']:.0%} of nodes; rankings skew toward it")
+        elif w["kind"] == "generated_files":
+            out.append(f"generated/vendored, left out of analyze rankings: {w['count']} files ("
+                       + ", ".join(w["examples"]) + (", ..." if w["count"] > len(w["examples"]) else "") + ")")
     if primer:
         out += ["", *primer]
     return out

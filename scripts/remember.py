@@ -10,7 +10,7 @@ from helper.graph_build import DEPENDENCIES, PREDICATES
 from helper.graph_queries import Graph, TABLES, evidence, impact, query, reference, warnings, path_matches, unresolved_mentions
 from helper.graph_store import Store, canonical
 from helper.graph_reports import REPORTS, analyze
-from helper.graph_output import project_rows, render_table
+from helper.graph_output import compact_row, project_rows, render_table
 from helper.whole_repo import MAX_LINES, render, summary
 
 COMMANDS = {
@@ -43,6 +43,20 @@ def nonnegative(value):
     return value
 
 
+class Parser(argparse.ArgumentParser):
+    """Unknown options are reported by the chosen subcommand, with that subcommand's usage."""
+
+    def parse_args(self, args=None, namespace=None):
+        args, extra = self.parse_known_args(args, namespace)
+        if extra:
+            action = getattr(args, "action", None)
+            choices = next((a.choices for a in self._actions if isinstance(a, argparse._SubParsersAction)), {})
+            hint = ("; impact is file-level, --grain applies to neighbors, paths and analyze"
+                    if action == "impact" and any(a.startswith("--grain") for a in extra) else "")
+            (choices.get(action) or self).error("unrecognized arguments: " + " ".join(extra) + hint)
+        return args
+
+
 def parser():
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
     common.add_argument("--repo", help="Source root, including an ordinary directory; default current directory")
@@ -52,12 +66,14 @@ def parser():
     common.add_argument("--max-files", type=positive, help="Capture file count limit (20000)")
     common.add_argument("--max-file-bytes", type=positive, help="Per-file read limit (1 MiB)")
     common.add_argument("--max-total-bytes", type=positive, help="Total captured bytes (32 MiB)")
-    common.add_argument("--limit", type=positive, help="Rows per page (query: 200, others: 30); also raises query retention")
+    common.add_argument("--limit", type=positive, help="Rows per page (query: 200, analyze: 60, others: 30); also raises query retention")
     common.add_argument("--offset", type=nonnegative, help="Delivered row offset (0)")
-    common.add_argument("--max-bytes", type=positive, help="JSON response budget, at least 2048 (12000)")
+    common.add_argument("--max-bytes", type=positive, help="JSON response budget, at least 2048 (analyze: 24000, others: 12000)")
     common.add_argument("--format", choices=("json", "table"), help="Result format; bare map defaults to text")
     common.add_argument("--fields", help="Comma-separated result columns; full reports remain retained")
-    p = argparse.ArgumentParser(description=__doc__, parents=[common])
+    common.add_argument("--verbose", action="store_true",
+                        help="Full rows: ids, keys, digests, witness endpoints; history: events and every counter")
+    p = Parser(description=__doc__, parents=[common])
     sub = p.add_subparsers(dest="action")
     for name, description in COMMANDS.items():
         q = sub.add_parser(name, help=description, description=description, parents=[common])
@@ -122,8 +138,11 @@ def parser():
             q.add_argument("--max-events", type=positive, default=25000, help="Per-harness event limit")
         if name == "analyze":
             q.add_argument("report", choices=tuple(REPORTS))
-            q.add_argument("--grain", choices=("file", "symbol"))
+            q.add_argument("--grain", "--kind", dest="grain", choices=("file", "symbol"),
+                           help="Rank files or symbols; --kind is an alias")
             q.add_argument("--include-tests", action="store_true")
+            q.add_argument("--include-generated", action="store_true",
+                           help="Rank generated/vendored files too (dist/, vendor/, @generated, large .d.ts)")
             q.add_argument("--exclude-entrypoints", action="store_true")
             q.add_argument("--exclude-public", action="store_true")
         if name == "show":
@@ -144,9 +163,11 @@ def defaults(args):
     if args.action == "query":
         args.limit = explicit_limit or args.max_query_rows or 200
         args.max_query_rows = max(args.max_query_rows or 1000, args.limit + getattr(args, "offset", 0))
+    # Ranked reports are read top-down; a larger first page saves a paging round trip.
+    first_page = (60, 24000) if args.action == "analyze" else (30, 12000)
     for key, value in {"repo": ".", "cache": None, "snapshot": None, "exclude": [], "max_files": 20000,
                        "max_file_bytes": 1024*1024, "max_total_bytes": 32*1024*1024,
-                       "limit": 30, "offset": 0, "max_bytes": 12000,
+                       "limit": first_page[0], "offset": 0, "max_bytes": first_page[1], "verbose": False,
                        "format": None, "fields": None, "path": None, "kind": None, "whole_repo_lines": MAX_LINES}.items():
         if not hasattr(args, key):
             setattr(args, key, value)
@@ -263,13 +284,15 @@ def run(args, store):
         if args.action == "map" and not args.path and not args.kind and not args.format and not args.fields:
             found = warnings(graph, store.root)
             recent = None
-            if args.primer and not args.snapshot:
+            if args.primer and args.snapshot:
+                recent = ["primer omitted: --snapshot pins source; the primer reads live history"]
+            elif args.primer and args.primer_depth:
                 try:
                     from helper.primer import build as build_primer, render as render_primer
                     recent = render_primer(build_primer(graph, args), args.primer_bytes)
-                except Exception:
+                except Exception as error:
                     # Orientation must not fail because a recording or Git lookup is unavailable.
-                    recent = None
+                    recent = [f"primer omitted: {type(error).__name__}: {str(error)[:120]}"]
             text = render(graph, found, args.whole_repo_lines, recent)
             if text is None and args.whole_repo_lines > 0:
                 text = summary(graph, found, args.whole_repo_lines, recent)
@@ -282,9 +305,13 @@ def run(args, store):
                     if n["kind"] in kinds and (paths is None or n.get("path") in paths)]
             rows.sort(key=lambda n: (n.get("path") or "", n.get("line") or 0, n["kind"]))
             doc = graph.document(args.action, rows, kinds=kinds, path=args.path)
-            if args.primer and args.primer_explicit and args.primer_depth and not args.snapshot and args.format != "table":
+            if args.primer and args.primer_explicit and args.primer_depth and not args.snapshot:
                 from helper.primer import build as build_primer
                 doc["primer"] = build_primer(graph, args)
+            elif args.primer and args.snapshot:
+                doc["primer"] = "omitted: --snapshot pins source; the primer reads live history"
+            elif not args.primer_explicit and not args.offset:
+                doc["primer"] = "omitted: --path/--kind/--format/--fields given; add --primer"
         else:
             rows = [{"snapshot": graph.snapshot, "root": store.root, "git": graph.body["source"]["git"],
                      "inventory": graph.body["source"]["inventory"], "producer": graph.body["producer"]}]
@@ -293,7 +320,7 @@ def run(args, store):
             doc = graph.document(args.action, rows)
     elif args.action == "analyze":
         doc = analyze(graph, args.report, args.grain, args.include_tests,
-                      args.exclude_entrypoints, args.exclude_public)
+                      args.exclude_entrypoints, args.exclude_public, args.include_generated)
     elif args.action == "find":
         if isinstance(args.regex, str):
             if args.text is not None:
@@ -373,7 +400,10 @@ def deliver(store, document, args):
     primer = document.pop("primer", None)
     report = store.save("report", document)
     all_rows = document["results"]
-    rows = project_rows(all_rows[args.offset:args.offset+args.limit], args.fields)
+    rows = all_rows[args.offset:args.offset+args.limit]
+    if not args.verbose and not args.fields and document["operation"] != "query":
+        rows = [compact_row(r) for r in rows]
+    rows = project_rows(rows, args.fields)
     limited = any(g.get("area") in LIMITING for g in document["gaps"])
     output = {"schema_version": 1, "status": "partial" if limited else "ok", "report": report,
               "snapshots": document.get("snapshots", []), "operation": document["operation"],
@@ -385,6 +415,9 @@ def deliver(store, document, args):
     if "history" in document:
         output["history"] = document["history"]
     if primer is not None:
+        if args.format == "table" and isinstance(primer, dict):
+            from helper.primer import render as render_primer
+            primer = render_primer(primer, args.primer_bytes)
         output["primer"] = primer
     def finish():
         # A page is complete when it reaches the last row; earlier pages were delivered by earlier calls.
@@ -412,6 +445,9 @@ def deliver(store, document, args):
     if len(canonical(output)) + 1 > args.max_bytes:
         output["scope"] = {"ref": report+"/scope", "freshness": document["scope"].get("freshness")}
         output["coverage"] = {"ref": report+"/coverage"}
+    # A requested primer that would crowd out every row says so instead of vanishing.
+    if isinstance(output.get("primer"), (dict, list)) and len(canonical({**output, "results": output["results"][:1]})) + 1 > args.max_bytes:
+        output["primer"] = f"omitted: byte cap; raise --max-bytes above {args.max_bytes}"
     while output["results"] and len(canonical(output)) + 1 > args.max_bytes:
         output["results"].pop()
         finish()

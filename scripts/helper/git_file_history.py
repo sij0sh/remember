@@ -96,24 +96,31 @@ def _log(resolver, repo, *args):
                         timeout=60)
 
 
-def history(resolver, repo, max_commits, follow=None, no_merges=False):
+def history(resolver, repo, max_commits, follow=None, no_merges=False, pickaxe=None):
     """Commits reachable from HEAD, newest first; ``follow`` narrows to one path across renames.
 
     Merge commits are included by default. ``no_merges`` removes them before the
     limit is applied, so the caller still receives ``max_commits`` ordinary commits.
+    ``pickaxe`` keeps commits that change the occurrence count of that literal
+    anywhere in the repository except Markdown prose (``git log -S``); changes
+    list only matching files.
     """
     repo_id = resolver.identity(repo)
     args = ["-n", str(max_commits + 1)]
     if no_merges:
         args.append("--no-merges")
+    if pickaxe:
+        args += ["-S", pickaxe]
     args.append("HEAD")
     if follow:
         args += ["--follow", "--", follow]
+    elif pickaxe:
+        args += ["--", ".", ":(exclude)*.md"]
     raw = _log(resolver, repo, *args)
     if raw is None:
         return [], [], {"complete": False, "error": "git log failed (no commits or not a repository)",
                         "no_merges": no_merges}
-    commits, changes = _parse(raw, repo_id, repo, "follow" if follow else "head_log")
+    commits, changes = _parse(raw, repo_id, repo, "pickaxe" if pickaxe else "follow" if follow else "head_log")
     complete = len(commits) <= max_commits
     if not complete:
         dropped = commits[max_commits:]

@@ -254,5 +254,79 @@ class TargetHistoryTests(unittest.TestCase):
         self.assertEqual(out["coverage"]["sessions"]["state"], "partial")
 
 
+    def followup(self, text, id="f"):
+        return {"type": "message", "id": id, "parentId": "r", "message": {"role": "user", "content": text}}
+
+    def test_exchange_is_one_row_carrying_its_request(self):
+        self.recording()
+        out = self.history()
+        rows = [r for r in out["results"] if r["category"] == "recorded_activity"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["evidence"]["kind"], "tool_call")
+        self.assertEqual(rows[0]["basis"], "recorded_definition_at_edit")
+        self.assertEqual(rows[0]["intent"]["request"]["text"], "Reject the eager approach")
+        self.assertEqual(rows[0]["intent"]["request"]["origin"], "human")
+
+    def test_corrected_and_failed_work_rank_before_plain_requests(self):
+        self.recording(sid="plain", request="Add the target helper")
+        self.recording(sid="corrected", request="Make target eager",
+                       extra=[self.followup("No, revert that; it broke the loader")])
+        out = self.history()
+        first = out["results"][0]
+        self.assertEqual(first["evidence"]["session"], "corrected")
+        self.assertEqual(first["intent"]["signals"], ["possible_correction"])
+        self.assertEqual(first["intent"]["followup"]["text"], "No, revert that; it broke the loader")
+        plain = next(r for r in out["results"] if r["evidence"]["session"] == "plain")
+        self.assertEqual(plain["intent"]["signals"], [])
+        self.recording(sid="neutral", request="Tidy target", extra=[self.followup("Thanks, now write docs")])
+        neutral = next(r for r in self.history()["results"] if r["evidence"]["session"] == "neutral")
+        self.assertEqual(neutral["intent"]["signals"], [])
+
+    def test_failed_edit_is_a_signal(self):
+        path = self.recording(sid="failed")
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[3]["message"]["isError"] = True
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        row = self.history("a.py")["results"][0]
+        self.assertIn("failed_edit", row["intent"]["signals"])
+
+    def test_default_delivery_is_compact_and_verbose_keeps_evidence(self):
+        self.recording(extra=[self.followup("That's not what I asked; undo it")])
+        out = self.cli("history", "a.py::target", "--recordings", str(self.archive))
+        row = out["results"][0]
+        self.assertEqual(row["source"], "session")
+        self.assertEqual(row["text"], "Reject the eager approach")
+        self.assertEqual(row["signals"], ["possible_correction"])
+        self.assertIn("undo it", row["followup"])
+        self.assertRegex(row["ref"], r"^past@\d+#[0-9a-f]{12}$")
+        self.assertLess(len(json.dumps(row)), 400)
+        self.assertNotIn("evidence", row)
+        self.assertNotIn("groups", json.dumps(out["coverage"]))
+        self.assertIn("context", out["expand"]["session"])
+        verbose = self.cli("history", "a.py::target", "--recordings", str(self.archive), "--verbose", "--max-bytes", "40000")
+        self.assertIn("evidence", verbose["results"][0])
+        self.assertIn("groups", verbose["coverage"]["sessions"])
+
+    def test_symbol_pickaxe_finds_removed_callers_outside_the_file(self):
+        self.init()
+        self.write("b.py", "from a import target\nprint(target())\n")
+        self.commit("add caller")
+        (self.repo / "b.py").unlink()
+        removed = self.commit("remove caller")
+        out = self.history("a.py::target", "--no-sessions")
+        row = next(r for r in out["results"] if r["ref"] == removed)
+        self.assertEqual((row["basis"], row["pickaxe"]), ("symbol_name_pickaxe", "target"))
+        self.assertEqual([c["path"] for c in row["changes"]], ["b.py"])
+        initial = next(r for r in out["results"] if r["subject"] == "initial")
+        self.assertEqual(initial["pickaxe"], "target")
+        self.assertIn("symbol_name_pickaxe", {g.get("basis") for g in out["coverage"]["git"]})
+        self.write("a.py", "def target():\n    return 3\n")
+        self.commit("unrelated body change")
+        compact = self.cli("history", "a.py::target", "--no-sessions")["results"]
+        self.assertEqual(compact[0]["signals"], ["pickaxe:target"])
+        self.assertEqual(compact[-1]["text"], "unrelated body change")
+        self.assertNotIn("signals", compact[-1])
+        self.assertFalse(any(g.get("basis") == "symbol_name_pickaxe" for g in self.history("a.py", "--no-sessions")["coverage"]["git"]))
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,9 @@ project code, installs dependencies or runs tests. Targeted graph commands do
 not scan recordings. The documented exception is bare `map` text, which reads a
 bounded recent-work primer: 3 sessions, 3 non-merge commits, current session
 excluded, about 2 KB. Use `--no-primer`, `--primer-depth N`, `--primer-bytes N`,
-`--primer-root DIR`, `--primer-merges`, or `--exclude-session ID`. Targeted
+`--primer-root DIR`, `--primer-merges`, or `--exclude-session ID`. Other `map`
+forms include it only with `--primer` (JSON field or table lines); otherwise, and
+under `--snapshot` or a byte cap, `primer` names the omission. Targeted
 results provide `history.next`; explicit `history TARGET` retrieval reads
 recordings (see [history](history.md)).
 `describe` derives the command/argument catalog from the same parser as the CLI.
@@ -32,7 +34,15 @@ python3 "$S/remember.py" query --sql 'SELECT target, count(DISTINCT source) AS c
 Use `--snapshot ID` for an existing view. Otherwise each read captures current
 source, reusing an unchanged capture's graph. File-level traversal is the default;
 `--grain symbol` traverses the original graph. Directory targets expand to files;
-`impact` runs at file grain and reports symbol targets in `scope.widened_targets`.
+`impact` runs at file grain, takes no `--grain`, and reports symbol targets in
+`scope.widened_targets`. Consumer rows carry `reach`: `direct` (one hop; for a
+symbol target, a call into it, an import line or a mention naming it),
+`file_only` (one hop, names only other parts of the file) or `indirect` (two or
+more hops); `risk_profile` counts each.
+
+Delivered rows omit `id`, `key`, `digest`, `parse_state: parsed`, `state: read`
+and false flags; witness steps keep `predicate` and `edge`. `--verbose` returns
+full rows. `analyze` defaults to 60 rows / 24 KB per page, others 30 / 12 KB.
 Ambiguous names return candidates instead of selecting one silently.
 
 ## Evidence and scope
@@ -42,7 +52,14 @@ Ambiguous names return candidates instead of selecting one silently.
 | `CONTAINS`, `DECLARES` | Inventory containment and syntactic definitions. |
 | `IMPORTS` | Import destination under the named resolver rule. |
 | `CALLS_STATIC` | A supported Python, TS/JS or Rust call or construction. |
-| `TESTS` | Test-file import association, not verified assertion coverage. |
+| `TESTS` | Test-file (or Rust `#[cfg(test)]` item) import association, not verified assertion coverage. |
+| `REFERENCES` | Manifest/CI literal path: package.json scripts, main/types/bin/exports/files; tsconfig extends/include/files/references; Cargo lib/bin/test/build/path deps/workspace members; CI workflow lines. Not an import; not traversed by default. |
+
+A certain path (tsconfig field, Cargo path, path-shaped script argument) that
+matches no captured file is a `references` gap; `map`/`status` print
+`referenced but missing: PATH` when it is absent on disk, or `not captured but
+used` when ignored. Script outputs (`--outfile`, `>`) and build-output folders
+(`dist`, `build`, `target`, ...) are never reported missing.
 
 Default dependency traversal uses `IMPORTS` and `CALLS_STATIC`. Incoming and
 outgoing impact traversals remain separate. Tests are attached as suggestions;
@@ -80,17 +97,22 @@ kind/path filtering; use `--kind occurrence` to count source lines alone.
 | Report | Meaning |
 |---|---|
 | `fanin` | Distinct file consumers or symbol callers. |
-| `orphans` | No inbound links, with entrypoint/mention hints; not proof of dead code. |
+| `orphans` | No inbound links, with entrypoint/mention hints (`manifest_reference` + `referenced_by` when a manifest names the file); not proof of dead code. |
 | `cycles` | File dependency strongly connected components with edge witnesses. |
-| `untested` | No direct TESTS association; import reachability from tests to depth 3. Not execution coverage. |
+| `untested` | No direct TESTS association; import reachability from tests to depth 3. Files with Rust `#[cfg(test)]`/`#[test]` items are skipped (`scope.inline_tested`). Not execution coverage. |
 | `largest` | Source lines per symbol (default) or file. |
 
 Tests are excluded by default; `--include-tests` includes them where applicable
-(`untested` always reports implementation files). `--grain file|symbol` applies
-to fanin, orphans and largest; cycles and untested are file-only.
+(`untested` always reports implementation files). `--grain file|symbol` (alias
+`--kind`) applies to fanin, orphans and largest; cycles and untested are file-only.
 `--exclude-entrypoints` filters naming/main-guard candidates (cycles containing
 one are omitted). `--exclude-public` filters top-level non-underscore candidates
 and requires symbol grain. These are heuristics, not export or entrypoint proof.
+Generated/vendored files are left out of every report and listed in
+`scope.excluded_generated`: a `dist`, `vendor`, `third_party`, `generated` or
+similar folder; `.min.js`, `_pb2.py`, `.pb.go`, `.generated.*` names; an
+`@generated`/`DO NOT EDIT`/`regenerate with` header; `.d.ts` of 1,000+ lines.
+`--include-generated` ranks them.
 
 Definition/import extraction: Python AST; optional tree-sitter for Rust, Go,
 TS/JS and shell. Python import roots include the repository root, `src`, package

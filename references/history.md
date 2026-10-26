@@ -40,8 +40,21 @@ git log --follow -- src/store.py
 git show COMMIT -- src/store.py
 ```
 
-Results separate Git changes, recorded activity, commit witnesses and scoped
-literal mentions. Each supplies its matching basis, original ref and expansion.
+Default output is one compact row per recorded turn or commit (`source`,
+`date`, `id`, `text`, `signals`, `activity`, `ref`; ~300 bytes), plus a coverage
+summary and `expand` templates. Ranking: turns with `possible_correction` or a
+failed call/edit; human-requested edits and mentions; commits that changed the
+symbol name's occurrence count (`pickaxe:NAME`, `git log -S` across the repository,
+Markdown excluded, names of 4+ characters); file commits; read-only or delegated
+turns. Newest first within a tier. `possible_correction` means the next human
+message opens with rejecting phrasing (no, revert, instead, not what...): expand it.
+`followup` holds that message's excerpt. `ref` is a cite token
+(`id@line#hash`) for `sessions.py context --ref`, or a JSON ref when the line is
+unknown. A tool call and its result are one row.
+
+`--verbose` returns event rows and every coverage counter. Verbose results
+separate Git changes, recorded activity, commit witnesses and scoped literal
+mentions; each row carries `intent` (`request`, `followup`, `signals`). Each supplies its matching basis, original ref and expansion.
 Git starts at file grain (`symbol -> file`). Recorded symbol matches distinguish
 post-edit definitions from unchanged hunk text anchored uniquely in target source;
 neither establishes durable identity across refactors. Pinned targets use pinned

@@ -8,6 +8,7 @@ from one read-only log call. Nothing here writes to the graph or report cache.
 """
 import os
 import re
+import collections
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -494,11 +495,12 @@ def _joined(header, sections):
 
 
 def render(data, max_bytes=2048):
-    """Render a primer to text lines, trimming optional detail before whole rows."""
+    """Render a primer to text lines, trimming optional detail before whole rows; dropped rows are named."""
     if not data or (not data.get("sessions") and not data.get("commits") and not data.get("tree")):
-        return []
+        return ["primer omitted: no recorded sessions, commits or tree state"]
     header = _header(data)
     sections = _sections(data)
+    before = collections.Counter(section["kind"] for section in sections)
     while len(_joined(header, sections).encode("utf-8")) > max_bytes:
         changed = False
         for section in reversed(sections):
@@ -524,4 +526,9 @@ def render(data, max_bytes=2048):
     header = _header(data, sum(1 for section in sections if section["kind"] == "session"),
                      sum(1 for section in sections if section["kind"] == "commit"))
     text = _joined(header, sections)
-    return text.rstrip("\n").splitlines()
+    lines = text.rstrip("\n").splitlines()
+    dropped = before - collections.Counter(section["kind"] for section in sections)
+    if dropped["session"] or dropped["commit"]:
+        lines.append(f"  primer omitted: byte cap (--primer-bytes {max_bytes}); "
+                     f"{dropped['session']} sessions, {dropped['commit']} commits not shown")
+    return lines

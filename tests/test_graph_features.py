@@ -113,9 +113,9 @@ class FeatureTests(unittest.TestCase):
         largest = self.cli('analyze', 'largest')['results']
         self.assertTrue(all(r['kind'] == 'symbol' for r in largest))
         self.assertEqual([r['lines'] for r in largest], sorted((r['lines'] for r in largest), reverse=True))
-        self.assertFalse(any(r['is_test'] for r in largest))
+        self.assertFalse(any(r.get('is_test') for r in largest))
         included = self.cli('analyze', 'largest', '--include-tests')['results']
-        self.assertTrue(any(r['is_test'] for r in included))
+        self.assertTrue(any(r.get('is_test') for r in included))
         self.cli('analyze', 'cycles', '--grain', 'symbol', success=False)
         self.cli('analyze', 'fanin', '--exclude-public', success=False)
 
@@ -130,8 +130,111 @@ class FeatureTests(unittest.TestCase):
         self.assertIn('(other directories)', text)
         self.assertIn('3200 lines', text)
 
+    def test_query_table_keeps_aliases_and_aggregates_in_select_order(self):
+        self.fixture()
+        sql = "SELECT path, count(*) AS n FROM nodes WHERE path IS NOT NULL GROUP BY path ORDER BY path"
+        rows = self.cli('query', '--sql', sql)['results']
+        lines = self.raw('query', '--sql', sql, '--format', 'table').splitlines()
+        header = next(i for i, line in enumerate(lines) if line.split()[:2] == ['path', 'n'])
+        for row, line in zip(rows, lines[header + 1:]):
+            self.assertEqual(line.split(), [row['path'], str(row['n'])])
+        table = self.raw('query', '--sql', 'SELECT count(*) AS c, min(path) AS p FROM files', '--format', 'table')
+        self.assertIn('c  p', table)
+
+    def test_subcommand_errors_name_the_subcommand(self):
+        self.fixture()
+        result = subprocess.run([sys.executable, str(test_graph.ROOT/'scripts/remember.py'), 'impact', 'core.py',
+                                 '--grain', 'symbol', '--repo', str(self.repo), '--cache', str(self.cache)],
+                                text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('usage: remember.py impact', result.stderr)
+        self.assertIn('impact is file-level', result.stderr)
+        alias = self.cli('analyze', 'largest', '--kind', 'symbol')
+        self.assertEqual(alias['results'], self.cli('analyze', 'largest', '--grain', 'symbol')['results'])
+
     def test_history_output_options(self):
         self.fixture()
         result = self.cli('history', 'core.py', '--no-sessions', '--fields', 'kind,path')
         self.assertTrue(all(set(r) <= {'kind', 'path'} for r in result['results']))
         self.assertIn('history', self.raw('history', 'core.py', '--no-sessions', '--format', 'table'))
+
+    def test_generated_code_leaves_rankings_and_is_listed(self):
+        self.fixture()
+        self.write('vendor/bundle.js', 'export function huge() {\n' + '  let x = 1;\n' * 50 + '}\n')
+        self.write('types/host.d.ts', '// Written by a tool; regenerate with /plugin-types\n'
+                   'export declare function hostCall(): void;\n')
+        largest = self.cli('analyze', 'largest', '--grain', 'file')
+        paths = {r['path'] for r in largest['results']}
+        self.assertNotIn('vendor/bundle.js', paths)
+        self.assertNotIn('types/host.d.ts', paths)
+        excluded = largest['scope']['excluded_generated']
+        self.assertEqual({f['path']: f['reason'] for f in excluded['files']},
+                         {'vendor/bundle.js': 'folder:vendor', 'types/host.d.ts': 'header'})
+        included = self.cli('analyze', 'largest', '--grain', 'file', '--include-generated')
+        self.assertIn('vendor/bundle.js', {r['path'] for r in included['results']})
+        self.assertIn('generated/vendored, left out of analyze rankings: 2 files', self.raw('map', '--no-primer'))
+
+    def test_rust_cfg_test_modules_are_tests(self):
+        self.write('Cargo.toml', '[package]\nname = "demo"\n')
+        self.write('src/lib.rs', 'pub mod numeric;\npub mod plain;\n')
+        self.write('src/numeric.rs', 'pub fn clamp(x: i32) -> i32 { x }\n\n#[cfg(test)]\nmod tests {\n'
+                   '    use super::*;\n    #[test]\n    fn clamps() { assert_eq!(clamp(1), 1); }\n}\n')
+        self.write('src/plain.rs', 'pub fn bare() {}\n')
+        untested = self.cli('analyze', 'untested')
+        paths = {r['path'] for r in untested['results']}
+        self.assertNotIn('src/numeric.rs', paths)
+        self.assertIn('src/plain.rs', paths)
+        self.assertEqual(untested['scope']['inline_tested'], ['src/numeric.rs'])
+        symbols = self.cli('map', '--kind', 'symbol', '--verbose', '--max-bytes', '40000')['results']
+        flags = {r['qualname']: r['is_test'] for r in symbols if r['path'] == 'src/numeric.rs'}
+        self.assertEqual(flags, {'clamp': False, 'tests': True, 'tests::clamps': True})
+
+    def test_manifest_references_link_files_and_flag_missing_paths(self):
+        self.write('package.json', '{\n  "scripts": {\n    "build": "node scripts/build.mjs --outfile dist/out.js",\n'
+                   '    "typecheck": "tsc --noEmit -p worker"\n  },\n  "main": "dist/out.js"\n}\n')
+        self.write('tsconfig.json', '{\n  "extends": "./.plugin/types/tsconfig.json",\n  "include": ["src", ".plugin/types"]\n}\n')
+        self.write('scripts/build.mjs', 'console.log(1)\n')
+        self.write('worker/tsconfig.json', '{}\n')
+        self.write('src/index.ts', 'export const a = 1;\n')
+        self.write('.github/workflows/ci.yml', 'jobs:\n  t:\n    steps:\n      - uses: actions/checkout@v4\n'
+                   '      - run: ./scripts/check.sh && node scripts/build.mjs\n')
+        edges = self.cli('query', '--sql', "SELECT s.path AS src, t.path AS dst FROM edges e JOIN nodes s ON s.id = e.source "
+                         "JOIN nodes t ON t.id = e.target WHERE e.predicate = 'REFERENCES' ORDER BY 1, 2")['results']
+        self.assertEqual({(r['src'], r['dst']) for r in edges},
+                         {('package.json', 'scripts/build.mjs'), ('package.json', 'worker'),
+                          ('tsconfig.json', 'src'), ('.github/workflows/ci.yml', 'scripts/build.mjs')})
+        text = self.raw('map', '--no-primer').split('\n==> ')[0]
+        self.assertIn('referenced but missing: .plugin/types/tsconfig.json (named at tsconfig.json:2)', text)
+        self.assertIn('referenced but missing: .plugin/types (named at tsconfig.json:3)', text)
+        self.assertIn('referenced but missing: scripts/check.sh', text)
+        self.assertNotIn('dist/out.js', text)
+        orphans = self.cli('analyze', 'orphans')['results']
+        build = next(r for r in orphans if r['path'] == 'scripts/build.mjs')
+        self.assertEqual(build['entrypoint_hint'], 'manifest_reference')
+        self.assertIn('package.json', build['referenced_by'])
+
+    def test_impact_separates_direct_file_only_and_indirect_consumers(self):
+        self.write('core.py', 'def save(value):\n    return value\ndef load():\n    return 1\n')
+        self.write('saver.py', 'from core import save\ndef run():\n    return save(1)\n')
+        self.write('loader.py', 'from core import load\ndef run():\n    return load()\n')
+        self.write('api.py', 'from saver import run\ndef go():\n    return run()\n')
+        result = self.cli('impact', 'core.py::save', '--max-bytes', '40000')
+        reach = {r['path']: r['reach'] for r in result['results'] if r.get('role') == 'possible_consumer'}
+        self.assertEqual(reach, {'saver.py': 'direct', 'loader.py': 'file_only', 'api.py': 'indirect'})
+        profile = next(r for r in result['results'] if r['kind'] == 'risk_profile')
+        self.assertEqual((profile['direct_consumers'], profile['file_only_consumers'], profile['indirect_consumers']),
+                         (1, 1, 1))
+        whole = self.cli('impact', 'core.py', '--max-bytes', '40000')
+        self.assertEqual({r['path']: r['reach'] for r in whole['results'] if r.get('role') == 'possible_consumer'},
+                         {'saver.py': 'direct', 'loader.py': 'direct', 'api.py': 'indirect'})
+
+    def test_default_rows_are_compact_and_verbose_keeps_identifiers(self):
+        self.fixture()
+        row = self.cli('analyze', 'fanin')['results'][0]
+        self.assertFalse({'id', 'key', 'digest', 'parse_state'} & set(row))
+        self.assertTrue(row['ref'].startswith('snapshot:'))
+        full = self.cli('analyze', 'fanin', '--verbose')['results'][0]
+        self.assertTrue({'id', 'key', 'digest'} <= set(full))
+        step = self.cli('neighbors', 'core.py', '--depth', '3')['results'][0]['witness'][0]
+        self.assertEqual(set(step), {'predicate', 'edge'})
+        self.assertEqual(self.cli('show', step['edge'])['results'][0]['predicate'], step['predicate'])
