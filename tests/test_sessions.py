@@ -297,7 +297,7 @@ class HistoryTests(unittest.TestCase):
         value, _ = self.run_cli("projects", self.directory, "--harness", "pi", "--limit", "1")
         # The invocation directory's root stays listed beyond --limit.
         self.assertEqual((len(value["results"]), value["omissions"]["selection"]), (2, 1))
-        self.assertEqual([r["root"] for r in value["results"] if r.get("listed_because")], [self.root])
+        self.assertEqual([key(r["root"]) for r in value["results"] if r.get("listed_because")], [key(self.root)])
 
     def test_overview_points_to_projects_when_roots_are_excluded(self):
         self.fixture()

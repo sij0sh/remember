@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .discovery import SETTINGS, candidate_files, default_recordings, header
+from .discovery import SETTINGS, candidate_files, default_recordings, header, normalized_root
 from . import cite, commit_links, edit_hunks, git_file_history, repo_files
 from .bindings import parse_params, parse_types, types_for
 from .context import changed_components, context_at_request
@@ -828,8 +828,11 @@ def projects(args):
              for (harness, root), (n, mtime) in roots.items()]
     found.sort(key=lambda r: r["newest"], reverse=True)
     rows = found[args.offset:args.offset + args.limit]
-    here = os.getcwd()
-    current = [r for r in found if r["root"] and (here == r["root"] or here.startswith(r["root"].rstrip("/") + "/"))]
+    here = normalized_root(os.getcwd())
+    def covers(root):
+        root = normalized_root(root).rstrip("\\/")
+        return here == root or here.startswith(root + ("\\" if "\\" in root else "/"))
+    current = [r for r in found if r["root"] and covers(r["root"])]
     # The invocation directory's own roots stay visible however far down the recency order they fall.
     rows += [{**r, "listed_because": "invocation_directory"} for r in current if r not in rows]
     scope["project_unknown"] = sum(r["recordings"] for r in found if r["root"] is None)
