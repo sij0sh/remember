@@ -563,13 +563,16 @@ class RepositoryTests(unittest.TestCase):
     def test_cite_checks_full_commits_against_the_repository(self):
         repo = self.repo()
         sha = self.commit(repo, "one", **{"a.py": "x = 1\n"})
+        # A short SHA needs a letter and a digit to be recognized as a bare hex citation.
+        short = next(sha[:n] for n in range(7, 40)
+                     if any(c.isdigit() for c in sha[:n]) and any(c in "abcdef" for c in sha[:n]))
         report = self.directory / "report.md"
-        report.write_text(f"Landed in {sha}; not {'f' * 40} or {sha[:7]}.\n")
+        report.write_text(f"Landed in {sha}; not {'f' * 40} or {short}.\n")
         result = subprocess.run([sys.executable, str(SESSIONS), "cite", str(report), "--repo", str(repo)],
                                 capture_output=True, text=True, timeout=60, cwd=self.root)
         self.assertEqual(result.returncode, 1, result.stderr)
         states = {r["citation"]: r["state"] for r in json.loads(result.stdout)["results"]}
-        self.assertEqual(states, {sha: "ok", "f" * 40: "not_in_repo", sha[:7]: "ambiguous"})
+        self.assertEqual(states, {sha: "ok", "f" * 40: "not_in_repo", short: "ambiguous"})
 
 
 if __name__ == "__main__":
