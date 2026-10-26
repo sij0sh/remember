@@ -436,7 +436,11 @@ class HistoryTests(unittest.TestCase):
             [pi("user", f"request {i} " + "z" * 500, f"u{i}") for i in range(60)])
         value, _ = self.run_cli("select", path, "--role", "user", "--sql", "SELECT harness, count(*) AS n FROM rows GROUP BY harness")
         self.assertEqual(value["results"], [{"harness": "pi", "n": 60}])
-        self.assertEqual(value["matched"], 60)
+        self.assertEqual((value["matched"], value["events_matched"]), (1, 60))
+        self.assertEqual((value["delivery"]["returned"], value["delivery"]["total"]), (1, 1))
+        searched, _ = self.run_cli("search", path, "--role", "user", "--limit", 5)
+        self.assertEqual((searched["delivery"]["returned"], searched["delivery"]["total"]), (5, 60))
+        self.assertFalse(searched["delivery"]["complete"])
         self.run_cli("select", path, "--sql", "SELECT 1", "--offset", 1, code=2)
         _, raw = self.run_cli("select", path, "--role", "user")
         piped, _ = self.run_cli("SELECT count(*) AS n FROM rows", script=ROWS, stdin=raw)
@@ -1067,6 +1071,14 @@ class CoverageRecoveryTests(unittest.TestCase):
         self.assertEqual({r["key"]: r["sessions_independent"] for r in commands["results"]},
                          {"pnpm setup": 1, "enactry setup": 1, "cargo test": 1})
         self.assertEqual(commands["results"][0]["examples"][0]["failures"], 2)
+        # Missing-path failures describe the agent's environment, not the project; they are hidden by default.
+        for name in ("e.jsonl", "f.jsonl"):
+            self.failing_session(name, name[0], "cat: /tmp/x: No such file or directory", command="cat /tmp/x")
+        noisy, _ = self.run_cli("recurrence", self.directory)
+        self.assertEqual(len(noisy["results"]), 1)
+        self.assertEqual(noisy["omissions"]["environment_noise"], 2)
+        kept, _ = self.run_cli("recurrence", self.directory, "--include-noise")
+        self.assertIn("cat: <path>: No such file or directory", {r["key"] for r in kept["results"]})
         capped, _ = self.run_cli("recurrence", self.directory, "--text", "CREDENTIAL_MISSING", "--examples", 1)
         self.assertEqual(capped["results"][0]["examples_omitted"], 1)
         rerun = split_line(capped["next"][-1]["argv"])

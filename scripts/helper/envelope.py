@@ -296,7 +296,11 @@ def _delivery(result):
     if result.get("status") == "partial" and not reasons:
         reasons.append("partial")
     reasons = list(dict.fromkeys(reasons))
-    result["delivery"] = {"complete": not reasons, **({"incomplete_reasons": reasons} if reasons else {})}
+    returned = sum(len(h[k]) for h in _holders(result) for k in PRIMARY if isinstance(h.get(k), list))
+    total = result.get("matched")
+    result["delivery"] = {"complete": not reasons, "returned": returned,
+                          **({"total": total} if isinstance(total, int) and not isinstance(total, bool) else {}),
+                          **({"incomplete_reasons": reasons} if reasons else {})}
 
 
 def emit(result, max_bytes=8192):

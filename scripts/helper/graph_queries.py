@@ -2,6 +2,8 @@
 import collections
 import json
 import math
+import os
+import re
 import sqlite3
 import time
 from pathlib import PurePosixPath
@@ -128,18 +130,27 @@ class Graph:
                          "depth": depth, "max_nodes": max_nodes, "seconds": seconds,
                          "frontier": [self.public(self.nodes[n]) for n in sorted(set(frontier))]}
 
-    def find(self, text):
-        text = text.casefold()
+    def within(self, target):
+        """Paths a map target covers: a file, a directory's files, or a symbol's file."""
+        return {self.nodes[n]["path"] for n in self.seeds(target, "file")}
+
+    def find(self, text, word=False, case_sensitive=False, regex=False):
+        try:
+            pattern = re.compile((rf"\b(?:{text})\b" if word else text) if regex
+                                 else (rf"\b{re.escape(text)}\b" if word else re.escape(text)),
+                                 0 if case_sensitive else re.IGNORECASE)
+        except re.error as error:
+            raise ValueError(f"Invalid --regex pattern: {error}") from None
         results = []
         for node in self.nodes.values():
-            fields = [f for f in ("name", "key", "qualname", "path") if text in str(node.get(f, "")).casefold()]
+            fields = [f for f in ("name", "key", "qualname", "path") if pattern.search(str(node.get(f) or ""))]
             if fields:
                 results.append({**self.public(node), "match": fields})
         for row in self.body["source"]["files"]:
             if row["text"] is None:
                 continue
             for number, line in enumerate(row["text"].splitlines(), 1):
-                if text in line.casefold():
+                if pattern.search(line):
                     results.append({"kind": "occurrence", "path": row["path"], "line": number,
                                     "text": line, "ref": reference(self.snapshot, "source", row["path"]),
                                     "basis": "literal_match"})
@@ -148,6 +159,43 @@ class Graph:
     def document(self, operation, results, **scope):
         return {"operation": operation, "snapshots": [self.snapshot], "results": results,
                 "coverage": self.body["coverage"], "gaps": self.body["gaps"], "scope": scope}
+
+
+# One file above this share of nodes skews fan-in, size and node counts.
+DOMINANT_SHARE = 0.25
+# Disk directories that never hold project source; references to them are expected.
+UNREFERENCED = {".git", ".hg", ".svn", ".remember", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
+# Prose and ignore lists name directories without using them.
+QUIET = (".md", ".markdown", ".rst", ".txt", ".adoc", "ignore")
+
+
+def warnings(graph, root):
+    """Capture skews an agent would otherwise miss: a dominant file and referenced but uncaptured directories."""
+    out = []
+    counts = collections.Counter(n["path"] for n in graph.nodes.values() if n["kind"] != "directory" and n.get("path"))
+    total = sum(counts.values())
+    for path, count in counts.most_common():
+        if not total or count / total <= DOMINANT_SHARE:
+            break
+        out.append({"kind": "dominant_file", "path": path, "nodes": count, "share": round(count / total, 3),
+                    "meaning": "Counts and rankings skew toward this file; exclude it if vendored or generated."})
+    captured = {p.split("/", 1)[0] for p in graph.files}
+    try:
+        missing = sorted(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False)
+                         and e.name not in captured and e.name not in UNREFERENCED)
+    except OSError:
+        missing = []
+    for name in missing:
+        mention = re.compile(rf"(?<![\w.-])(?:\./)?{re.escape(name)}/")
+        refs = [{"path": row["path"], "line": number}
+                for row in graph.body["source"]["files"]
+                if row["text"] is not None and not row["path"].lower().endswith(QUIET)
+                for number, line in enumerate(row["text"].splitlines(), 1) if mention.search(line)]
+        if refs:
+            out.append({"kind": "uncaptured_reference", "path": name, "references": len(refs), "examples": refs[:5],
+                        "basis": "current disk", "meaning": "Captured files use this directory, but it is excluded "
+                        "or ignored; read it directly before judging what those files do."})
+    return out
 
 
 def evidence(graph, item):
@@ -285,7 +333,8 @@ TABLES = {
     "edges": {"id": "TEXT", "source": "TEXT", "predicate": "TEXT", "target": "TEXT", "resolution": "TEXT",
               "rule": "TEXT", "evidence": "TEXT", "ref": "TEXT"},
     "gaps": {"area": "TEXT", "reason": "TEXT", "path": "TEXT", "line": "INTEGER", "predicate": "TEXT", "text": "TEXT",
-             "rule": "TEXT", "bindings": "INTEGER", "language": "TEXT", "error": "TEXT", "candidates": "TEXT"},
+             "rule": "TEXT", "bindings": "INTEGER", "calls": "INTEGER", "language": "TEXT", "error": "TEXT",
+             "candidates": "TEXT"},
     "files": {"path": "TEXT", "digest": "TEXT", "state": "TEXT", "size": "INTEGER", "ref": "TEXT"},
 }
 
@@ -296,7 +345,8 @@ def query(graph, sql, params=None, limit=1000, seconds=5.0):
     db.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 128*1024)
     sources = {"nodes": [graph.public(n) for n in graph.body["nodes"]],
                "edges": [{**e, "ref": reference(graph.snapshot, "edges", e["id"])} for e in graph.body["edges"]],
-               "gaps": graph.body["gaps"],
+               # Python call gaps are one row per call; TS/JS and Rust rows carry their own count.
+               "gaps": [{**g, "calls": g.get("calls", 1)} if g["area"] == "calls" else g for g in graph.body["gaps"]],
                "files": [{**r, "ref": reference(graph.snapshot, "source", r["path"])} for r in graph.body["source"]["files"]]}
     def scalar(value):
         return json.dumps(value, ensure_ascii=True) if isinstance(value, (dict, list)) else value

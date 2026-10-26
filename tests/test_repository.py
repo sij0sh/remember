@@ -86,9 +86,9 @@ class RepositoryTests(unittest.TestCase):
     def links(self, path, *args):
         return self.sql(path, "SELECT * FROM commit_links ORDER BY command_offset", "--include", "git", *args)["results"]
 
-    def run_select(self, *args):
+    def run_select(self, *args, env=None):
         result = subprocess.run([sys.executable, str(SESSIONS), "select", *map(str, args), "--max-bytes", "60000"],
-                                capture_output=True, text=True, timeout=60, cwd=self.root)
+                                capture_output=True, text=True, timeout=60, cwd=self.root, env=env)
         return result.returncode, json.loads(result.stdout)
 
     def test_include_reads_the_project_repository_not_the_invocation_directory(self):
@@ -108,7 +108,11 @@ class RepositoryTests(unittest.TestCase):
     def test_unknown_view_names_the_likely_view(self):
         repo = self.repo()
         self.commit(repo, "feat: one", **{"a.txt": "1\n"})
-        code, value = self.run_select("--project", repo, "--include", "edits", "--sql", "SELECT count(*) FROM edits")
+        # An unknown view is a SQL error even when no recording directory exists, as on CI.
+        settings = self.directory / "settings.json"
+        settings.write_text(json.dumps({"recordings": {"pi": [], "codex": [], "claude-code": []}}))
+        code, value = self.run_select("--project", repo, "--include", "edits", "--sql", "SELECT count(*) FROM edits",
+                                      env={**os.environ, "TRACE_SESSIONS_SETTINGS": str(settings)})
         self.assertEqual(code, 2)
         self.assertIn("did you mean edit_hunks?", value["results"][0]["error"])
 

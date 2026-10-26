@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 from helper.graph_build import DEPENDENCIES, PREDICATES
-from helper.graph_queries import Graph, TABLES, evidence, impact, query, reference
+from helper.graph_queries import Graph, TABLES, evidence, impact, query, reference, warnings
 from helper.graph_store import Store, canonical
+from helper.whole_repo import MAX_LINES, render
 
 COMMANDS = {
     "map": "List source files, directories or symbols and graph coverage (default).",
@@ -55,8 +56,15 @@ def parser():
         q = sub.add_parser(name, help=description, description=description, parents=[common])
         if name in ("map", "find"):
             q.add_argument("--kind", action="append", choices=("file", "directory", "symbol", "external", "occurrence"))
+        if name == "map":
+            q.add_argument("path", nargs="?", help="Limit rows to this file, directory or symbol's file")
+            q.add_argument("--whole-repo-lines", type=nonnegative, default=MAX_LINES,
+                           help="Bare map prints every source file as text at or under this many lines; 0 disables")
         if name == "find":
             q.add_argument("text")
+            q.add_argument("--word", action="store_true", help="Match whole words only")
+            q.add_argument("--case-sensitive", action="store_true", help="Match case exactly (default ignores case)")
+            q.add_argument("--regex", action="store_true", help="Treat TEXT as a Python regular expression")
         if name in ("neighbors", "paths", "impact"):
             q.add_argument("--depth", type=positive, default=2, help="Traversal depth; actual omitted frontier is reported")
             q.add_argument("--max-nodes", type=positive, default=1000)
@@ -90,7 +98,8 @@ def parser():
 def defaults(args):
     for key, value in {"repo": ".", "cache": None, "snapshot": None, "exclude": [], "max_files": 20000,
                        "max_file_bytes": 1024*1024, "max_total_bytes": 32*1024*1024,
-                       "limit": 30, "offset": 0, "max_bytes": 12000}.items():
+                       "limit": 30, "offset": 0, "max_bytes": 12000,
+                       "path": None, "kind": None, "whole_repo_lines": MAX_LINES}.items():
         if not hasattr(args, key):
             setattr(args, key, value)
     args.action = args.action or "map"
@@ -177,22 +186,31 @@ def run(args, store):
         return doc
     graph = get_graph(store, args)
     if args.action in ("map", "snapshot", "status"):
+        if args.action == "map" and not args.path and not args.kind:
+            text = render(graph, warnings(graph, store.root), args.whole_repo_lines)
+            if text is not None:
+                return {"text": text}
         if args.action == "map":
             kinds = getattr(args, "kind", None) or ["file", "directory"]
-            rows = [graph.public(n) for n in graph.nodes.values() if n["kind"] in kinds]
+            paths = graph.within(args.path) if args.path else None
+            rows = [graph.public(n) for n in graph.nodes.values()
+                    if n["kind"] in kinds and (paths is None or n.get("path") in paths)]
             rows.sort(key=lambda n: (n.get("path") or "", n.get("line") or 0, n["kind"]))
-            doc = graph.document(args.action, rows, kinds=kinds)
+            doc = graph.document(args.action, rows, kinds=kinds, path=args.path)
         else:
             rows = [{"snapshot": graph.snapshot, "root": store.root, "git": graph.body["source"]["git"],
                      "inventory": graph.body["source"]["inventory"], "producer": graph.body["producer"]}]
+            if args.action == "status":
+                rows[0]["warnings"] = warnings(graph, store.root)
             doc = graph.document(args.action, rows)
     elif args.action == "find":
         if not args.text.strip():
             raise ValueError("Search text must not be empty")
-        rows = graph.find(args.text)
+        rows = graph.find(args.text, word=args.word, case_sensitive=args.case_sensitive, regex=args.regex)
         if args.kind:
             rows = [r for r in rows if r["kind"] in args.kind]
-        doc = graph.document("find", rows, text=args.text, kinds=args.kind)
+        doc = graph.document("find", rows, text=args.text, kinds=args.kind,
+                             match={"word": args.word, "case_sensitive": args.case_sensitive, "regex": args.regex})
     elif args.action in ("neighbors", "paths"):
         source = args.source if args.action == "paths" else args.target
         direction = "out" if args.action == "paths" else args.direction
@@ -238,14 +256,15 @@ def deliver(store, document, args):
               "gaps": {"count": len(document["gaps"]), "ref": report+"/gaps"},
               "delivery": {"offset": args.offset, "total": len(all_rows)}}
     def finish():
-        output["delivery"].update(returned=len(output["results"]), complete=args.offset == 0 and len(output["results"]) == len(all_rows))
-        missing = len(all_rows) - len(output["results"])
+        # A page is complete when it reaches the last row; earlier pages were delivered by earlier calls.
+        following = args.offset + len(output["results"])
+        output["delivery"].update(returned=len(output["results"]), complete=following >= len(all_rows))
+        missing = max(0, len(all_rows) - following)
         output["omissions"] = {"selection": missing}
         if missing:
             output["status"] = "partial"
         if missing and not output["results"] and args.offset < len(all_rows):
             output["omissions"]["envelope_omitted"] = True
-        following = args.offset + len(output["results"])
         output["next"] = ({"action": "show", "ref": report, "repo": store.root,
                            "cache": str(store.path.parent), "offset": following}
                           if following < len(all_rows) else None)
@@ -281,6 +300,9 @@ def main():
             return 0
         store = Store(args.repo, args.cache)
         document = run(args, store)
+        if "text" in document:
+            sys.stdout.write(document["text"])
+            return 0
         deliver(store, document, args)
         return 0
     except (ValueError, OSError, RecursionError) as error:

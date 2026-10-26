@@ -385,7 +385,8 @@ def describe():
         "actions": ["overview", "projects", "search", "select", "duplicates", "recurrence", "records", "edges", "context",
                     "payload", "raw", "cite", "describe"],
         "recurrence": "failed results grouped by --text term, error signature or command; counts independent sessions "
-                      "and gives the first failed result's ref in each; mentions outside failed results are not counted",
+                      "and gives the first failed result's ref in each; mentions outside failed results are not counted; "
+                      "tool and environment failures are hidden unless --include-noise or --text",
         "citations": ["context, edges, payload and raw rows carry cite tokens (id@line[.item]#hash); --ref accepts one",
                       "search, select and overview rows are locators and carry none: expand before citing",
                       "cite REPORT checks every token, full commit SHA, bare hex prefix and bare session id in a report"],
@@ -534,13 +535,17 @@ def table_hint(message):
     return f"; did you mean {guess}? Views: {', '.join(views)} (sessions.py describe lists columns)" if guess else ""
 
 
-# Repository views built without any recording; commit_links and edit_* are derived from events.
-REPOSITORY_ONLY = {"commits", "changes", "files", "code_items"}
+# Views derived from scanned recordings; every other view comes from the repository or none at all.
 EVENT_VIEWS = ("rows", "events", "commit_links", "edit_hunks", "edit_symbols")
 
 
 def repository_only(sql):
-    """True when a query reads repository views and no event-derived view, so recordings need no scan."""
+    """True when a query reads no event-derived view, so recordings need no scan.
+
+    Unknown table names also take this path: the engine reports the bad view (and
+    names the likely one) even when no recording directory exists. Event views
+    still need the scan, whether or not the query also names an unknown table.
+    """
     try:
         import duckdb
         # Named parameters ($name) make the statement unpreparable for name extraction; NULL parses alike.
@@ -549,7 +554,7 @@ def repository_only(sql):
         if re.search(r"\b(" + "|".join(EVENT_VIEWS) + r")\b", sql, re.IGNORECASE):
             return False
         tables = {name.lower() for name in re.findall(r"\b(?:from|join)\s+\"?(\w+)", sql, re.IGNORECASE)}
-    return bool(tables) and tables <= REPOSITORY_ONLY
+    return not (tables & set(EVENT_VIEWS))
 
 
 def sql_query(groups, scope, args, repository=None):
@@ -608,8 +613,11 @@ def sql_query(groups, scope, args, repository=None):
     scope.update(result["scope"])
     scope["matched_by_harness"] = {h: len(found) for h, found in matched.items()}
     scope["full_text"] = full
-    out = {"scope": scope, "matched": total, "query": args.sql,
-           "counting_scope": "every matched row in the scanned selection; scope.scan_complete bounds that selection",
+    # matched counts query output rows; events_matched counts the input rows the query read.
+    returned = result["omissions"].get("query_rows_total", len(result["results"]))
+    out = {"scope": scope, "matched": returned, "events_matched": total, "query": args.sql,
+           "counting_scope": "matched: query output rows; events_matched: every matched input row in the scanned "
+                             "selection; scope.scan_complete bounds that selection",
            "results": result["results"], "omissions": result["omissions"],
            "next": coverage_next(groups, scope)
            + ["Select contributing rows with the same filters (no --sql) to inspect evidence refs."]}
@@ -621,6 +629,10 @@ def sql_query(groups, scope, args, repository=None):
 # Rows that hold a failed operation's output; a tool_call only carries its result's outcome.
 FAILURE_KINDS = ("tool_result", "command", "file_read", "file_edit")
 ERROR_LINE = re.compile(r"error|fail|exception|denied|not found|no such|invalid|cannot|refused|timed? ?out|panic|fatal",
+                        re.IGNORECASE)
+# Failures of the agent's tooling or environment, not the project: missing paths, wrong cwd, absent commands.
+NOISE_KINDS = ("file_read", "file_edit")
+NOISE_LINE = re.compile(r"no such file or directory|enoent|eisdir|is a directory|not a directory|command not found",
                         re.IGNORECASE)
 # A harness's exit-status banner says a command failed, not how; the output after it names the failure.
 EXIT_BANNER = re.compile(r"(?:exit code|exit status|process exited with code)\s*-?\d+", re.IGNORECASE)
@@ -652,6 +664,11 @@ def recurrence(groups, args, scope):
     # Counts are over full output text; only an unreadable record keeps a preview.
     omitted = sum(e.get("text_state") == "budget_omitted" for e in failed)
     scope.update(text_truncated_events=omitted, text_complete=not omitted)
+    noise = 0
+    if not args.terms and not args.include_noise:
+        kept = [e for e in failed if e["kind"] not in NOISE_KINDS
+                and not NOISE_LINE.search(failure_signature(e.get("text")))]
+        noise, failed = len(failed) - len(kept), kept
     buckets = {}
     if args.terms:
         # One group per term, zero included: a row mentioning two terms counts under both.
@@ -697,7 +714,8 @@ def recurrence(groups, args, scope):
                              "sessions_independent counts a subagent or fork with its parent",
            "results": page,
            "omissions": {"selection": max(0, len(rows) - len(page)),
-                         **({"below_min_sessions": len(buckets) - len(rows)} if not args.terms else {})},
+                         **({"below_min_sessions": len(buckets) - len(rows)} if not args.terms else {}),
+                         **({"environment_noise": noise} if noise else {})},
            "next": coverage_next(groups, scope)
            + ["Expand each example with context --ref REF --mode exchange before calling a failure recurring; "
               "cite the tokens that expansion returns."]}

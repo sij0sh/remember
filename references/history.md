@@ -14,7 +14,7 @@ the previous CLI. They read recordings and Git, not the retained graph cache.
 | `edges` | Recorded session parent/call/result links, not repository dependencies. |
 | `payload --ref JSON`, `raw --ref JSON` | Expanded payload or native record content. |
 | `records` | Native records, including unsupported/malformed-record gaps. |
-| `recurrence` | Failed results grouped across independent sessions. |
+| `recurrence` | Failed results grouped across independent sessions; tool/environment failures hidden unless `--include-noise`. |
 | `duplicates` | Repeated normalized source windows; no recordings read. |
 | `cite REPORT` | Validate expanded citation tokens and full Git SHAs. |
 

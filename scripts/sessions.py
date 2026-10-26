@@ -93,6 +93,9 @@ def parser():
             q.add_argument("--min-sessions", type=int, default=2,
                            help="Independent sessions a derived group needs; --text terms are always shown")
             q.add_argument("--examples", type=int, default=5, help="Example refs per group, one per independent session")
+            q.add_argument("--include-noise", action="store_true",
+                           help="Keep tool and environment failures (file read/edit errors, missing paths, "
+                                "absent commands); hidden by default unless --text names terms")
         if action == "duplicates":
             q.add_argument("--span", type=int, default=7, help="Normalized code lines per compared window")
             q.add_argument("--min-chars", type=int, default=200, help="Skip windows shorter than this many characters")

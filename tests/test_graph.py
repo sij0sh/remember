@@ -143,7 +143,7 @@ class GraphTests(unittest.TestCase):
         self.write("README.md", "# demo\n")
         self.write("config.json", "{}\n")
         self.write("a.py", "import requests\ndef f(obj):\n    return obj.run()\n")
-        value = self.cli("map")
+        value = self.cli("map", "--kind", "file")
         self.assertEqual(value["status"], "ok")
         self.assertEqual(value["coverage"]["unparsed_files"], {"json": 1, "markdown": 1})
         self.assertNotIn("imports", value["coverage"]["gaps"])
@@ -416,14 +416,71 @@ class GraphTests(unittest.TestCase):
     def test_graph_pagination_preserves_legacy_envelope_coverage(self):
         from helper.envelope import load_rows
         self.write("a.py", "")
-        out = self.cli("map", "--limit", "1")
+        out = self.cli("map", "--whole-repo-lines", "0", "--limit", "1")
         _, coverage = load_rows(json.dumps(out))
         self.assertFalse(coverage["complete"])
         self.assertEqual(coverage["rows_omitted"], 1)
 
+    def test_last_page_is_complete(self):
+        self.fixture()
+        first = self.cli("map", "--kind", "file", "--limit", "3")
+        last = self.cli("show", first["report"], "--offset", "3", "--limit", "100")
+        self.assertFalse(first["delivery"]["complete"])
+        self.assertTrue(last["delivery"]["complete"])
+        self.assertEqual((last["status"], last["omissions"]["selection"]), ("ok", 0))
+
+    def test_map_path_limits_rows(self):
+        self.fixture()
+        symbols = self.cli("map", "service.py", "--kind", "symbol")
+        self.assertEqual({(r["path"], r["name"]) for r in symbols["results"]}, {("service.py", "work")})
+        files = self.cli("map", "tests", "--kind", "file")
+        self.assertEqual([r["path"] for r in files["results"]], ["tests/test_service.py"])
+
+    def test_find_word_case_and_regex(self):
+        self.write("a.rs", "fn main() {\n    x.unwrap();\n    y.unwrap_or(0);\n    Unwrap();\n}\n")
+        lines = lambda *a: [r["line"] for r in self.cli("find", *a, "--kind", "occurrence")["results"]]
+        self.assertEqual(lines("unwrap"), [2, 3, 4])
+        self.assertEqual(lines("unwrap", "--word"), [2, 4])
+        self.assertEqual(lines("unwrap", "--word", "--case-sensitive"), [2])
+        self.assertEqual(lines(r"unwrap_\w+", "--regex"), [3])
+        self.assertIn("Invalid --regex", self.cli("find", "(", "--regex", success=False)["error"])
+
+    def test_status_warns_on_dominant_file_and_uncaptured_reference(self):
+        self.write("big.py", "".join(f"def f{i}():\n    pass\n" for i in range(20)))
+        self.write("small.py", "def g():\n    pass\n")
+        self.write("run.sh", "python3 .tools/check.py\n")
+        self.write("README.md", "See vendor/notes\n")
+        (self.repo / ".tools").mkdir()
+        (self.repo / "vendor").mkdir()
+        rows = self.cli("status", "--exclude", ".tools")["results"][0]["warnings"]
+        self.assertEqual({(w["kind"], w["path"]) for w in rows},
+                         {("dominant_file", "big.py"), ("uncaptured_reference", ".tools")})
+        self.assertEqual(next(w for w in rows if w["path"] == ".tools")["examples"], [{"path": "run.sh", "line": 1}])
+
+    def test_gap_calls_column(self):
+        self.write("a.py", "def f(obj):\n    return obj.run()\n")
+        out = self.cli("query", "--sql", "SELECT sum(calls) AS calls FROM gaps WHERE area = 'calls'")
+        self.assertEqual(out["results"], [{"calls": 1}])
+
+    def test_bare_map_prints_small_repository_whole(self):
+        self.fixture()
+        self.write("package-lock.json", "{}\n")
+        (self.repo / ".tools").mkdir()
+        self.write("run.sh", "python3 .tools/check.py\n")
+        proc = subprocess.run([sys.executable, str(ROOT/"scripts/remember.py"), "--repo", str(self.repo),
+                               "--cache", str(self.cache)], capture_output=True, text=True, timeout=20)
+        text = proc.stdout
+        self.assertTrue(text.startswith("WHOLE REPOSITORY: all 6 readable captured files"), text[:200])
+        self.assertIn("==> core.py <==\ndef save(value):\n    return value\n", text)
+        self.assertIn("not shown: package-lock.json (lockfile)", text)
+        self.assertIn("not captured but used: .tools/ (referenced at run.sh:1)", text)
+        self.assertEqual(sorted(self.cache.rglob("*.md")), [])
+        listing = self.cli("map", "--whole-repo-lines", "5")
+        self.assertIn("core.py", {r["path"] for r in listing["results"]})
+
     def test_paging_is_pinned_not_recomputed(self):
         self.fixture()
-        page = self.cli("map", "--limit", "1")
+        page = self.cli("map", "--whole-repo-lines", "0", "--limit", "1")
         total = page["delivery"]["total"]
         self.write("later.py", "")
         following = self.cli("show", page["report"], "--offset", "1", "--limit", "100")
@@ -462,7 +519,8 @@ class GraphTests(unittest.TestCase):
     def test_common_flags_before_action(self):
         self.fixture()
         proc = subprocess.run([sys.executable, str(ROOT/"scripts/remember.py"), "--repo", str(self.repo),
-                               "--cache", str(self.cache), "--limit", "1", "map"], capture_output=True, text=True)
+                               "--cache", str(self.cache), "--limit", "1", "map", "--whole-repo-lines", "0"],
+                              capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(len(json.loads(proc.stdout)["results"]), 1)
 
