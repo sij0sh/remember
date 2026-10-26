@@ -1,7 +1,7 @@
 # Graph tools
 
-`python3 "$S/remember.py" COMMAND --repo DIR` returns JSON by default, except bare `map`: whole source below 3,000 lines
-(and 200 KB), otherwise a directory summary. `--whole-repo-lines 0`, explicit
+`python3 "$S/remember.py" COMMAND --repo DIR` returns JSON by default, except bare `map`: whole source up to 24 KB
+(`--whole`: 3,000 lines / 200 KB), otherwise a directory summary. `--whole-repo-lines 0`, explicit
 `--format json|table`, or `--fields` selects rows. No command executes
 project code, installs dependencies or runs tests. Targeted graph commands do
 not scan recordings. The documented exception is bare `map` text, which reads a
@@ -186,8 +186,11 @@ raise `--max-bytes` when bytes, rather than row count, are the bottleneck.
 changing retained evidence. `show REPORT` can recover the full columns.
 
 Exit 0 means the operation completed, including explicitly partial evidence.
-`status: partial` comes from inventory, capture, source, parser, traversal, query or mention
-gaps, or undelivered rows; import, call and target gaps leave it `ok`.
+`status: partial` means incomplete: inventory, capture, traversal or mention gaps, a
+non-row-limit query gap, or a source/parser gap on a result file (find/query/analyze: any
+unread or unparsed in-scope file). `gaps.incomplete` counts them. Paging, byte caps and
+query row limits only truncate (`delivery.complete: false`, `results_truncated`); status
+stays `ok`. Import, call, target and unrelated-file gaps leave it `ok`.
 An empty incoming result with target mentions is `unknown`.
 Exit 2 means invalid input or an operation failure. `status`, `coverage`, `gaps`
 and `delivery` describe independent limitations. No result certifies safety.

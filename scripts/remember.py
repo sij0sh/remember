@@ -9,9 +9,10 @@ from pathlib import Path
 from helper.graph_build import DEPENDENCIES, PREDICATES
 from helper.graph_queries import Graph, TABLES, evidence, impact, query, reference, warnings, path_matches, unresolved_mentions
 from helper.graph_store import Store, canonical
-from helper.graph_reports import REPORTS, analyze
+
+from helper.graph_reports import REPORTS, analyze, generated_files
 from helper.graph_output import compact_row, project_rows, render_table
-from helper.whole_repo import MAX_LINES, render, summary
+from helper.whole_repo import MAX_BYTES, MAX_LINES, TEXT_BYTES, render, summary
 
 COMMANDS = {
     "map": "List source files, directories or symbols and graph coverage (default).",
@@ -83,6 +84,8 @@ def parser():
             q.add_argument("path", nargs="?", help="Limit rows to this file, directory or symbol's file")
             q.add_argument("--whole-repo-lines", type=nonnegative, default=MAX_LINES,
                            help="Bare map prints every source file as text at or under this many lines; 0 disables")
+            q.add_argument("--whole", action="store_true",
+                           help=f"Bare map: print whole source up to {MAX_BYTES} bytes (default cap {TEXT_BYTES})")
             q.add_argument("--primer", dest="primer", action="store_true", default=None,
                            help="Include the recent-work primer in JSON map output; bare map text includes it by default")
             q.add_argument("--no-primer", dest="primer", action="store_false",
@@ -143,6 +146,8 @@ def parser():
             q.add_argument("--include-tests", action="store_true")
             q.add_argument("--include-generated", action="store_true",
                            help="Rank generated/vendored files too (dist/, vendor/, @generated, large .d.ts)")
+            q.add_argument("--include-type-only", action="store_true",
+                           help="cycles: count TS `import type` edges, which are erased at runtime")
             q.add_argument("--exclude-entrypoints", action="store_true")
             q.add_argument("--exclude-public", action="store_true")
         if name == "show":
@@ -168,7 +173,8 @@ def defaults(args):
     for key, value in {"repo": ".", "cache": None, "snapshot": None, "exclude": [], "max_files": 20000,
                        "max_file_bytes": 1024*1024, "max_total_bytes": 32*1024*1024,
                        "limit": first_page[0], "offset": 0, "max_bytes": first_page[1], "verbose": False,
-                       "format": None, "fields": None, "path": None, "kind": None, "whole_repo_lines": MAX_LINES}.items():
+                       "format": None, "fields": None, "path": None, "kind": None, "whole_repo_lines": MAX_LINES,
+                       "whole": False}.items():
         if not hasattr(args, key):
             setattr(args, key, value)
     if args.max_bytes < 2048:
@@ -293,7 +299,7 @@ def run(args, store):
                 except Exception as error:
                     # Orientation must not fail because a recording or Git lookup is unavailable.
                     recent = [f"primer omitted: {type(error).__name__}: {str(error)[:120]}"]
-            text = render(graph, found, args.whole_repo_lines, recent)
+            text = render(graph, found, args.whole_repo_lines, recent, MAX_BYTES if args.whole else TEXT_BYTES)
             if text is None and args.whole_repo_lines > 0:
                 text = summary(graph, found, args.whole_repo_lines, recent)
             if text is not None:
@@ -320,7 +326,7 @@ def run(args, store):
             doc = graph.document(args.action, rows)
     elif args.action == "analyze":
         doc = analyze(graph, args.report, args.grain, args.include_tests,
-                      args.exclude_entrypoints, args.exclude_public, args.include_generated)
+                      args.exclude_entrypoints, args.exclude_public, args.include_generated, args.include_type_only)
     elif args.action == "find":
         if isinstance(args.regex, str):
             if args.text is not None:
@@ -388,27 +394,56 @@ def run(args, store):
         if len(candidates) == 1:
             attach(doc, graph, [candidates[0]["ref"]], store)
     doc["scope"]["freshness"] = store.freshness(graph.body) if args.snapshot or args.action == "status" else {"state": "captured_now"}
+    doc["incomplete"] = incomplete(doc, graph)
     return doc
 
 
-# Gap areas that limit a result; import, call and target gaps describe relationships the graph lacks.
-LIMITING = {"inventory", "capture", "source", "parser", "traversal", "query", "mentions"}
+# Gaps that could change the answer make a result incomplete; paging and byte budgets only truncate it.
+# Import, call and target gaps describe relationships the graph lacks and never limit by themselves.
+WHOLE = {"inventory", "capture", "traversal", "mentions"}
+UNREAD = {"file_limit", "byte_limit", "unread", "changed_during_capture", "missing"}
+SCANNING = {"find", "query", "analyze"}
+
+
+def incomplete(document, graph=None):
+    """Gaps that could change this answer, as opposed to gaps elsewhere in the snapshot."""
+    paths = {r.get("path") for r in document["results"]}
+    paths |= {p for r in document["results"] for p in r.get("files") or ()}
+    scope = document["scope"]
+    tests = scope.get("include_tests", document["operation"] != "analyze")
+    files = graph.files if graph else {}
+    generated = ({r["path"] for r in generated_files(graph)}
+                 if graph and document["operation"] == "analyze" and not scope.get("include_generated") else set())
+    found = []
+    for gap in document["gaps"]:
+        area, path = gap.get("area"), gap.get("path")
+        if area in WHOLE or (area == "query" and gap.get("reason") != "row_limit"):
+            found.append(gap)
+        elif area in ("source", "parser"):
+            # A file the scan could not read or parse may hold a match or rank; elsewhere only its own rows suffer.
+            node = files.get(path) or {}
+            skipped = path in generated or (node.get("is_test") and not tests)
+            scanned = document["operation"] in SCANNING and (area == "parser" or gap.get("reason") in UNREAD)
+            if not path or path in paths or (scanned and not skipped):
+                found.append(gap)
+    return found
 
 
 def deliver(store, document, args):
     # Primer evidence is transient and must not be retained with the report.
     primer = document.pop("primer", None)
+    limited = document.pop("incomplete", None)
+    limited = incomplete(document) if limited is None else limited
     report = store.save("report", document)
     all_rows = document["results"]
     rows = all_rows[args.offset:args.offset+args.limit]
     if not args.verbose and not args.fields and document["operation"] != "query":
         rows = [compact_row(r) for r in rows]
     rows = project_rows(rows, args.fields)
-    limited = any(g.get("area") in LIMITING for g in document["gaps"])
     output = {"schema_version": 1, "status": "partial" if limited else "ok", "report": report,
               "snapshots": document.get("snapshots", []), "operation": document["operation"],
               "scope": document["scope"], "coverage": document["coverage"], "results": rows,
-              "gaps": {"count": len(document["gaps"]), "ref": report+"/gaps"},
+              "gaps": {"count": len(document["gaps"]), "incomplete": len(limited), "ref": report+"/gaps"},
               "delivery": {"offset": args.offset, "total": len(all_rows)}}
     if document["scope"].get("assessment") == "unknown":
         output["status"] = "unknown"
@@ -431,8 +466,6 @@ def deliver(store, document, args):
             output["results_truncated"] = (f"{len(output['results'])} of {len(all_rows)} retained rows shown; "
                 f"--offset {following} or raise --limit N / --max-bytes N"
                 + ("; query retention capped: rerun query with a larger --limit" if query_limited else ""))
-        if missing and output["status"] != "unknown":
-            output["status"] = "partial"
         if missing and not output["results"] and args.offset < len(all_rows):
             output["omissions"]["envelope_omitted"] = True
         output["next"] = ({"action": "show", "ref": report, "repo": store.root,

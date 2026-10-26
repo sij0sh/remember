@@ -8,8 +8,8 @@ description: Recall relevant code, Git history and past sessions. Use whenever a
 Understand what exists, what a change could affect, and whether the proposed
 fix addresses the right responsibility. Choose your own reasoning and workflow;
 use only the evidence that helps the decision. For source orientation, bare `map`
-prints repositories of 3,000 lines or fewer whole as text; larger captures get a
-directory summary. Work from that. Bare `map` also prints a short recent-work
+prints source up to 24 KB whole as text; larger captures get a directory summary
+(`map --whole`: up to 3,000 lines / 200 KB). Work from that. Bare `map` also prints a short recent-work
 primer: 3 recorded sessions and 3 non-merge commits, about 2 KB, current session
 excluded, never retained. Omit it with `map --no-primer`; adjust with
 `--primer-depth N` and `--primer-bytes N`. Other `map` forms need `--primer`
@@ -25,7 +25,7 @@ Windows: run `python` or `py -3` where examples say `python3`.
 | `neighbors TARGET --direction in\|out` | Trace potential consumers or dependencies. |
 | `paths FROM TO` | Find a supported path with source witnesses. |
 | `impact TARGET` | Inspect potential consumers (`reach`: `direct`, `file_only`, `indirect`), dependencies, test associations and unknowns. |
-| `analyze REPORT` | `fanin`, `orphans`, `cycles`, `untested`, `largest`; read source to assess candidates. Generated/vendored files are left out (`scope.excluded_generated`; `--include-generated`). |
+| `analyze REPORT` | `fanin`, `orphans`, `cycles`, `untested`, `largest`; read source to assess candidates. Generated/vendored files are left out (`scope.excluded_generated`; `--include-generated`). `cycles` skips TS `import type` edges (`--include-type-only`). `orphans` flags files named in string literals (`path_literal`, `stem_literal`) as entrypoint candidates. |
 | `snapshot`; `impact --base ID --head ID` | Pin source; compare the full captured change. |
 | `history TARGET` | Rank prior requests, corrections, failures and commits for a file/symbol; follow `history.next` on targeted graph results. |
 | `show REF` | Read retained source, relationship evidence or report pages. |
@@ -34,7 +34,9 @@ Windows: run `python` or `py -3` where examples say `python3`.
 
 Targets are paths, path tails, symbol names, `path::qualified.name`, or returned
 node refs. Results carry pinned references and coverage. `status: partial` means
-the result is limited (unparsable source, bounded traversal, missing rows).
+incomplete: a gap that could change the answer (unread/unparsable file in scope,
+bounded traversal, unresolved mentions); `gaps.incomplete` counts them. Paging and
+byte caps only truncate: `status` stays `ok`, `delivery.complete: false`, `results_truncated`.
 `status: unknown` or `no_path_gaps_present` means absence of links is inconclusive.
 `--grain symbol` follows calls in `neighbors`, `paths` and `analyze` (`analyze --kind`
 is an alias); `impact` takes no `--grain`: it is file-level and widens symbol
@@ -67,11 +69,15 @@ event rows and every coverage counter. Check old assumptions against today's cod
 Graph SQL is SQLite: single-quote string literals; `describe` lists columns.
 SQL tables (join `edges.source`/`target` to `nodes.id`):
 `nodes(id, kind, path, name, qualname, line, end_line, symbol_kind, is_test)`,
-`edges(source, predicate, target, resolution, rule)`, `files(path, size, state)`,
+`edges(source, predicate, target, resolution, rule, type_only)`, `files(path, size, state)`,
 `gaps(area, reason, path, line, bindings, calls)`.
 
-History: `python3 "$S/sessions.py" search --text TEXT` returns locators;
-expand one with `context --ref REF` before relying on or quoting it. Search
+History: `python3 "$S/sessions.py" search --text TEXT` returns locators, human
+requests then assistant decisions first (`--order time`); `tool_result` rows are
+hidden (`excluded`; `--include-tools`, `--kind` or `--role tool` keep them).
+Expand one with `context --ref REF` before relying on or quoting it: the selected
+event (`selected: true`) comes whole, neighbors +/- `--radius` (3) as previews.
+`sessions.py` takes `--format table`, `--fields`, `--repo` and `--limit` like `remember.py`. Search
 specific names, symbols or `search --path FILE`; generic words (refactor,
 security) return noise. A named error or contract is also a concrete anchor.
 Skip history when there is no specific target. The bare `map` primer is the one

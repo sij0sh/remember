@@ -23,6 +23,10 @@ ENTRY_STEMS = {"main", "index", "cli", "app", "server", "__" + "main__", "__init
 ENTRY_DIRS = {"bin", "scripts", "examples", "example", "tools", "migrations"}
 MAIN = re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+main\s*\(|__name__\s*==\s*['\"]__ma[i]n__['\"]|^#!", re.M)
 TRANSITIVE_DEPTH = 3
+# Quoted path-like strings: build scripts, servers and HTML name files that no import reaches.
+LITERAL = re.compile(r"""(['"`])([^'"`\s]{2,200})\1""")
+# A compiled script is named by its output extension: "app-shell.js" serves app-shell.ts.
+SCRIPTS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 
 
 def code_files(graph, include_tests, keep=None):
@@ -68,6 +72,32 @@ def entrypoint(path, text):
     if text and MAIN.search(text):
         return "main_guard"
     return None
+
+
+def literals(texts):
+    """Files quoting each file name, and each bare word, as a string literal."""
+    names, words = collections.defaultdict(set), collections.defaultdict(set)
+    for path, text in texts.items():
+        for _, value in LITERAL.findall(text):
+            value = value.split("?")[0].split("#")[0]
+            names[PurePosixPath(value).name].add(path)
+            if "/" not in value and "." not in value:
+                words[value].add(path)
+    return names, words
+
+
+def literal_reference(path, texts, index):
+    """(hint, files) when another file names this one in a string: by file name, or by stem plus a
+    template that appends this file's extension (`${id}.ts` over a list of ids)."""
+    names, words = index
+    p = PurePosixPath(path)
+    aliases = {p.name} | ({p.stem + e for e in SCRIPTS} if p.suffix in SCRIPTS else set())
+    found = set().union(*(names.get(a, ()) for a in aliases)) - {path}
+    if found:
+        return "path_literal", found
+    appends = re.compile(r"\}" + re.escape(p.suffix) + r"\b") if p.suffix else None
+    found = {q for q in words.get(p.stem, ()) if q != path and appends and appends.search(texts[q])}
+    return ("stem_literal", found) if found else (None, set())
 
 
 def fanin(graph, grain, include_tests, keep):
@@ -119,28 +149,39 @@ def orphans(graph, grain, include_tests, keep):
     for a, b, _ in file_edges(graph, ("REFERENCES",)):
         manifests[b].add(a)
     words = graph.words()
+    index = None
     rows = []
     for path, n in files.items():
         if inbound[path]:
             continue
         stem = PurePosixPath(path).stem
         named = sorted({p for p, _ in words.get(stem, []) if p != path}) if len(stem) > 2 else []
-        hint = "manifest_reference" if manifests[path] else entrypoint(path, texts.get(path))
+        hint, referenced = ("manifest_reference", manifests[path]) if manifests[path] else (None, set())
+        if not hint:
+            index = index or literals(texts)
+            hint, referenced = literal_reference(path, texts, index)
+        hint = hint or entrypoint(path, texts.get(path))
         rows.append({**graph.public(n), "lines": line_count(texts.get(path)), "test_importers": len(from_tests[path]),
                      "entrypoint_hint": hint, "stem_mentioned_in": named[:5],
-                     **({"referenced_by": sorted(manifests[path])[:5]} if manifests[path] else {}),
+                     **({"referenced_by": sorted(referenced)[:5]} if referenced else {}),
                      "state": "entrypoint_candidate" if hint else "test_only" if from_tests[path] else "no_inbound_edges"})
     order = {"no_inbound_edges": 0, "test_only": 1, "entrypoint_candidate": 2}
     return sorted(rows, key=lambda r: (order[r["state"]], -r["lines"], r["path"]))
 
 
-def cycles(graph, include_tests, keep):
+def cycles(graph, include_tests, keep, include_type_only=False):
     files = code_files(graph, include_tests, keep)
-    adjacency, witness = collections.defaultdict(set), {}
+    adjacency, witness, erased = collections.defaultdict(set), {}, set()
     for a, b, edge in file_edges(graph):
         if a in files and b in files:
+            # `import type` is erased at runtime: it orders no module loading and closes no runtime cycle.
+            if edge.get("type_only") and not include_type_only:
+                erased.add((a, b))
+                continue
             adjacency[a].add(b)
-            witness.setdefault((a, b), edge)
+            # A runtime edge is the better witness for a pair that also has type-only imports.
+            if not edge.get("type_only") or (a, b) not in witness:
+                witness[(a, b)] = edge
     # Iterative Tarjan: deep import chains must not exhaust Python's stack.
     index, low, on, stack, found, counter = {}, {}, set(), [], [], [0]
     for root in sorted(files):
@@ -176,11 +217,14 @@ def cycles(graph, include_tests, keep):
         members = set(component)
         edges = [{"from": a, "to": b, "predicate": witness[(a, b)]["predicate"],
                   "line": (witness[(a, b)].get("evidence") or {}).get("line"),
+                  **({"type_only": True} if witness[(a, b)].get("type_only") else {}),
                   "edge": f"{graph.snapshot}/edges/{witness[(a, b)]['id']}"}
                  for a in component for b in sorted(adjacency[a] & members)]
         rows.append({"kind": "cycle", "size": len(component), "files": component, "edges": edges[:20],
                      "edge_count": len(edges)})
-    return sorted(rows, key=lambda r: (-r["size"], r["files"]))
+    rows.sort(key=lambda r: (-r["size"], r["files"]))
+    # Pairs whose only edges are type-only; a pair with any runtime edge stays in the graph.
+    return rows, len(erased - set(witness))
 
 
 def untested(graph, keep):
@@ -219,18 +263,21 @@ def largest(graph, grain, include_tests, keep):
 
 
 def analyze(graph, report, grain=None, include_tests=False, exclude_entrypoints=False, exclude_public=False,
-            include_generated=False):
+            include_generated=False, include_type_only=False):
     if grain == "symbol" and report in ("cycles", "untested"):
         raise ValueError(f"{report} supports only --grain file")
     grain = grain or ("symbol" if report == "largest" else "file")
     skipped = [] if include_generated else generated_files(graph)
     keep = set(graph.files) - {r["path"] for r in skipped}
+    extra = {}
     if report == "fanin":
         rows = fanin(graph, grain, include_tests, keep)
     elif report == "orphans":
         rows = orphans(graph, grain, include_tests, keep)
     elif report == "cycles":
-        rows = cycles(graph, include_tests, keep)
+        rows, erased = cycles(graph, include_tests, keep, include_type_only)
+        if erased:
+            extra["type_only_excluded"] = {"pairs": erased, "include_with": "--include-type-only"}
     elif report == "untested":
         rows = untested(graph, keep)
     elif report == "largest":
@@ -248,6 +295,6 @@ def analyze(graph, report, grain=None, include_tests=False, exclude_entrypoints=
     excluded = {"count": len(skipped), "files": skipped[:10], "include_with": "--include-generated"} if skipped else None
     inline = sorted(p for p, n in graph.files.items() if n.get("inline_tests")) if report == "untested" else []
     return graph.document("analyze", rows, excluded_generated=excluded,
-                          **({"inline_tested": inline} if inline else {}), exclude_entrypoints=exclude_entrypoints, exclude_public=exclude_public, report=report, grain=grain if report in ("fanin", "orphans", "largest") else "file",
-                          include_tests=include_tests, predicates=list(DEPENDENCIES),
+                          **({"inline_tested": inline} if inline else {}), **extra, exclude_entrypoints=exclude_entrypoints, exclude_public=exclude_public, report=report, grain=grain if report in ("fanin", "orphans", "largest") else "file",
+                          include_tests=include_tests, include_generated=include_generated, predicates=list(DEPENDENCIES),
                           assessment="structural candidates; read source before claiming dead, coupled or untested")

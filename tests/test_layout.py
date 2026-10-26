@@ -29,3 +29,25 @@ class LayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlagParityTests(unittest.TestCase):
+    """Both CLIs take the same paging, projection, format and repository flags."""
+
+    def options(self, parser):
+        import argparse
+        sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+        return {name: {o for a in q._actions for o in a.option_strings} for name, q in sub.choices.items()}
+
+    def test_sessions_row_commands_match_remember(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import remember
+        import sessions
+        graph = self.options(remember.parser())
+        shared = set(sessions.SHARED)
+        for name, flags in graph.items():
+            self.assertLessEqual(shared, flags, name)
+        for name, flags in self.options(sessions.parser()).items():
+            expected = shared if name in sessions.ROWS else {"--format", "--fields"}
+            self.assertLessEqual(expected, flags, name)

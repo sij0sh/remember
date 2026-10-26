@@ -228,7 +228,9 @@ def context(groups, ref, args, scope):
            "relationship_basis": basis, "matched": len(found), "cite": cite.token(target["ref"]),
            "selected": {"position": position, "on_page": on_page},
            "page": {"start": start, "end": start + len(rows)},
-           "results": [{**clean(e, args), "cite": cite.token(e["ref"])} for e in rows],
+           # The selected event is what the caller asked to read: full text; neighbors are previews.
+           "results": [{**clean(e, None), "selected": True, "cite": cite.token(e["ref"])} if e is target
+                       else {**clean(e, args), "cite": cite.token(e["ref"])} for e in rows],
            "omissions": {"selection": max(0, len(found) - len(rows))},
            "next": next_for(target)}
     if start + len(rows) < len(found) and not args.tail:
@@ -459,8 +461,20 @@ def combined_scope(scope, groups):
     return scope
 
 
+def rank(e):
+    """Human requests, then assistant decisions and reasoning, then tool and system activity."""
+    return 0 if human(e) else 1 if e["kind"] in ("assistant_message", "reasoning") else 2
+
+
 def search(recordings, args, repository=None):
     matches = [e for g in recordings for e in g["events"] if accepted(e, args)]
+    # Tool output echoes files and logs: it buries the requests and decisions that explain them.
+    tools = args.action == "search" and not (args.kind or args.role == "tool" or args.include_tools)
+    hidden = sum(e["kind"] == "tool_result" for e in matches) if tools else 0
+    if hidden:
+        matches = [e for e in matches if e["kind"] != "tool_result"]
+    if getattr(args, "order", "time") == "rank":
+        matches.sort(key=rank)
     rows = matches[args.offset:args.offset + args.limit]
     cache = RecordCache(args.max_record_bytes)
     if getattr(args, "fields", None):
@@ -471,6 +485,7 @@ def search(recordings, args, repository=None):
         out = [repository.enrich(e, row) for e, row in zip(rows, out)]
     gaps = [e for g in recordings for e in g["events"] if e["kind"] in ("gap", "unknown")]
     return {"matched": len(matches), "results": out,
+            **({"excluded": {"tool_result": hidden, "include_with": "--include-tools"}} if hidden else {}),
             "leads": [clean(e, args) for e in gaps[:3]],
             "omissions": {"selection": max(0, len(matches) - len(rows))},
             "next": sum((next_for(e)[:1] for e in rows[:2]), []) + sum((next_for(e)[-1:] for e in gaps[:1]), [])}

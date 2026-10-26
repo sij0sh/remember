@@ -95,10 +95,10 @@ the previous CLI. They read recordings and Git, not the retained graph cache.
 | Action | Result |
 |---|---|
 | `overview` (default), `projects` | Bounded recording overview and recorded project roots. |
-| `search --text TEXT` | Matching event previews; repeated text terms are OR. |
+| `search --text TEXT` | Matching event previews; repeated text terms are OR. Ranked: human requests, assistant decisions, rest (`--order time`). `tool_result` hidden unless `--include-tools`, `--kind` or `--role tool`. |
 | `search --path PREFIX` | Recorded file activity, distinct from text mentions. |
 | `select` | Filtered rows; `--sql` aggregates before output paging. |
-| `context --ref JSON` | Original turn, exchange, request or nearby records. |
+| `context --ref JSON` | Original turn, exchange, request or nearby records. Selected event whole (`selected: true`); +/- `--radius` neighbors as previews. |
 | `edges` | Recorded session parent/call/result links, not repository dependencies. |
 | `payload --ref JSON`, `raw --ref JSON` | Expanded payload or native record content. |
 | `records` | Native records, including unsupported/malformed-record gaps. |

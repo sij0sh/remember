@@ -6,15 +6,73 @@ import sys
 
 from helper import actions
 from helper.envelope import emit
+from helper.graph_output import render_table
 from helper.profiles import PROFILES
 
 
+# Commands that return result rows take the same paging, projection and repository flags as remember.py.
+ROWS = ("overview", "projects", "search", "select", "duplicates", "recurrence", "records", "edges", "context", "cite")
+SHARED = ("--format", "--fields", "--repo", "--limit")
+
+
+class Parser(argparse.ArgumentParser):
+    """Unknown options are reported by the chosen subcommand, with that subcommand's usage."""
+
+    def parse_args(self, args=None, namespace=None):
+        args, extra = self.parse_known_args(args, namespace)
+        if extra:
+            choices = next((a.choices for a in self._actions if isinstance(a, argparse._SubParsersAction)), {})
+            (choices.get(getattr(args, "action", None)) or self).error("unrecognized arguments: " + " ".join(extra))
+        return args
+
+
+COLUMNS = ("harness", "session", "kind", "role", "turn", "tool", "path", "command", "outcome", "exit_code", "text", "cite")
+
+
+def table(action, fields):
+    """Result rows of every harness group as one table, each tagged with its harness."""
+    def render(result):
+        groups = result.get("harnesses") if isinstance(result.get("harnesses"), list) else [result]
+        rows = [{**({"harness": g.get("harness")} if g is not result else {}), **r}
+                for g in groups for r in (g.get("results") or []) if isinstance(r, dict)]
+        present = list(dict.fromkeys(k for r in rows for k in r))
+        known = [k for k in COLUMNS if k in present]
+        columns = fields or (known if len(known) >= 3 else [k for k in present if k != "ref" or "cite" not in present])
+        delivery = result.get("delivery") or {}
+        view = {"status": result.get("status", "ok"), "operation": action, "results": rows, "report": "transient",
+                "delivery": {"total": result.get("matched", len(rows))}, "next": result.get("next")}
+        if delivery.get("complete") is False:
+            view["results_truncated"] = "incomplete: " + (", ".join(delivery.get("incomplete_reasons", [])) or "unknown")
+        return render_table(view, columns)
+    return render
+
+
+def project(result, fields):
+    """--fields for commands whose rows are built before projection; a selected row keeps its marker."""
+    for holder in [result, *(result.get("harnesses") or [])]:
+        if isinstance(holder, dict) and isinstance(holder.get("results"), list):
+            holder["results"] = [{k: r[k] for k in [*fields, "selected"] if k in r} if isinstance(r, dict) else r
+                                 for r in holder["results"]]
+
+
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = Parser(description=__doc__)
     sub = p.add_subparsers(dest="action")
     for action in ("overview", "projects", "search", "select", "duplicates", "recurrence", "records", "edges", "context",
                    "payload", "raw", "cite", "describe"):
         q = sub.add_parser(action)
+        q.add_argument("--format", choices=("json", "table"), default="json",
+                       help="json envelope, or a table of result rows (harness groups flattened)")
+        q.add_argument("--fields", default=("session,harness,kind,role,turn,tool,path,command,outcome,exit_code,text,ref"
+                                            if action in ("select", "duplicates") else None),
+                       help="Comma-separated result columns" + ("; event fields, read before --sql"
+                                                                if action in ("search", "select", "duplicates") else ""))
+        if action in ROWS:
+            q.add_argument("--repo", help="Repository worktree: recordings filter when --project is absent; "
+                                          "select git/files tables; cite commit checks. Defaults to the invocation directory")
+        if action == "cite":
+            q.add_argument("--limit", type=int, default=None, help="Rows per page (all)")
+            q.add_argument("--offset", type=int, default=0)
         # describe is one static schema document, read whole once; recurrence rows carry example refs.
         q.add_argument("--max-bytes", type=int, default=16384 if action in ("describe", "recurrence") else 8192,
                        help="Total JSON response byte budget (shared by every harness group)")
@@ -25,7 +83,6 @@ def parser():
         q.add_argument("--max-record-bytes", type=int, default=2 * 1024 * 1024)
         if action == "cite":
             q.add_argument("files", nargs="+", help="Written reports whose citations are checked; - reads stdin")
-            q.add_argument("--repo", help="Repository for commit checks; defaults to the invocation directory")
             continue
         if action in ("overview", "search", "select", "duplicates", "recurrence", "records", "edges", "context"):
             q.add_argument("files", nargs="*", help="JSONL files or directories; defaults to every harness in settings.json")
@@ -49,9 +106,9 @@ def parser():
                                     "subagent and forked recordings (parent_session absent)")
             q.add_argument("--kind", action="append", default=[])
             q.add_argument("--path", help="Normalized recorded activity path prefix")
-            q.add_argument("--limit", type=int, default={"select": None, "duplicates": 20}.get(action, 8),
+            q.add_argument("--limit", type=int, default={"select": None, "duplicates": 20, "context": None}.get(action, 8),
                            help="Rows per page; select defaults to 30, or with --sql to the query's own LIMIT "
-                                "(capped at 1000)")
+                                "(capped at 1000); context defaults to the selected event +/- --radius")
             q.add_argument("--offset", type=int, default=None if action == "context" else 0,
                            help="Page each harness's matched rows before response budgeting; "
                                 "context pages default to the window around the selected event")
@@ -65,7 +122,7 @@ def parser():
             q.add_argument("--ref", required=True, help="Returned ref as a JSON object")
         if action == "context":
             q.add_argument("--mode", choices=("turn", "exchange", "nearby", "request"), default="turn")
-            q.add_argument("--radius", type=int, default=3)
+            q.add_argument("--radius", type=int, default=3, help="Neighbors each side of the selected event (3)")
             q.add_argument("--compare-ref", help="Second request ref for changed-components comparison")
             q.add_argument("--tail", type=int, metavar="N", help="Page the last N events of the turn or window")
         if action in ("payload", "raw"):
@@ -80,12 +137,13 @@ def parser():
             q.add_argument("--parse-status", choices=("ok", "malformed_record", "oversized_record"),
                            help="Filter decoded, malformed, or oversized raw records")
         if action == "search":
+            q.add_argument("--include-tools", action="store_true",
+                           help="Keep tool_result rows; hidden by default unless --kind or --role tool asks")
+            q.add_argument("--order", choices=("rank", "time"), default="rank",
+                           help="rank: human requests, then assistant decisions, then the rest; time: recorded order")
             q.add_argument("--recordings", action="store_true",
                            help="Include each harness group's recording list (overview always has it)")
         if action in ("search", "select", "duplicates"):
-            q.add_argument("--fields", default="session,harness,kind,role,turn,tool,path,command,outcome,exit_code,text,ref"
-                           if action != "search" else None,
-                           help="Comma-separated event fields for row output")
             q.add_argument("--field", action="append", default=[], help="Additional alias=/raw/record/pointer")
         if action == "recurrence":
             q.add_argument("--by", choices=("error", "command"), default="error",
@@ -115,7 +173,6 @@ def parser():
                            help="Comma list of repository tables: git (commit_links, commits, changes), "
                                 "files, symbols (code_items; implies files), content (files.content), "
                                 "edits (edit_hunks, edit_symbols; implies symbols)")
-            q.add_argument("--repo", help="Repository worktree for git/files tables; defaults to --project, else the invocation directory")
             q.add_argument("--max-commits", type=int, default=2000, help="Commits read from HEAD history")
             q.add_argument("--follow", metavar="PATH", help="Limit commits/changes to one path's history across renames")
             q.add_argument("--max-repo-files", type=int, default=20000, help="Worktree paths in the files table")
@@ -148,9 +205,18 @@ def main():
             p.error("--root-map takes OLD=NEW")
     if args.action == "select" and args.limit is None and not args.sql:
         args.limit = 30
+    if args.action == "context" and args.limit is None:
+        args.limit = 8 if args.mode == "request" else 2 * args.radius + 1
+    fields = [f.strip() for f in args.fields.split(",") if f.strip()] if args.fields else None
     try:
         result = actions.run(args)
-        emit(result, args.max_bytes)
+        if fields and args.action not in ("search", "select", "duplicates"):
+            project(result, fields)
+        if args.action == "cite" and (args.offset or args.limit):
+            rows = result["results"]
+            result["results"] = rows[args.offset:args.offset + args.limit if args.limit else None]
+            result.setdefault("omissions", {})["selection"] = len(rows) - len(result["results"])
+        emit(result, args.max_bytes, table(args.action, fields) if args.format == "table" else None)
     except (ValueError, OSError, json.JSONDecodeError) as error:
         emit({"status": "error", "results": [{"error": str(error)[:500]}]}, max(1024, args.max_bytes))
         return 2

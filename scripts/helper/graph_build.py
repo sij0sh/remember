@@ -89,9 +89,9 @@ class Builder:
         return {"path": path, "line": line, "end_line": end_line or line,
                 "digest": self.files.get(path, {}).get("digest")}
 
-    def edge(self, src, predicate, dst, evidence, rule, resolution="resolved"):
+    def edge(self, src, predicate, dst, evidence, rule, resolution="resolved", **extra):
         body = {"source": src, "predicate": predicate, "target": dst, "evidence": evidence,
-                "rule": rule, "resolution": resolution, "basis": "derived"}
+                "rule": rule, "resolution": resolution, "basis": "derived", **extra}
         key = "edge:" + digest(body)[:24]
         self.edges[key] = {"id": key, **body}
 
@@ -167,8 +167,10 @@ class Builder:
                                          if str(PurePosixPath(p).parent) == (path or ".") and p.endswith(".go")]
                 else:
                     targets = []
+                # Type-only imports are erased at runtime: no load order, no runtime cycle.
+                erased = {"type_only": True} if row.get("type_only") else {}
                 for target in targets:
-                    self.edge(src, "IMPORTS", target, evidence, rule)
+                    self.edge(src, "IMPORTS", target, evidence, rule, **erased)
                     target_path = self.nodes[target].get("path")
                     inline = any(a <= row["line"] <= b for a, b in self.inline.get(row["path"], []))
                     if (is_test(row["path"]) or inline) and target_path and not is_test(target_path) and self.nodes[target]["kind"] == "file":

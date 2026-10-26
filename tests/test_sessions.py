@@ -170,6 +170,48 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(group["scope"]["unpaired_results"], 1)
         self.assertEqual(group["scope"]["calls_without_result"], 1)
 
+    def test_search_ranks_requests_before_assistant_text(self):
+        path = self.write("rank.jsonl", [
+            {"type": "session", "id": "s", "cwd": self.root},
+            pi("assistant", "earlier topic note", "a0"), pi("user", "please fix topic", "u1", "a0"),
+            pi("assistant", "topic fixed", "a1", "u1")])
+        ranked, _ = self.run_cli("search", path, "--text", "topic")
+        self.assertEqual(only(ranked)["results"][0]["text"], "please fix topic")
+        timed, _ = self.run_cli("search", path, "--text", "topic", "--order", "time")
+        self.assertEqual(only(timed)["results"][0]["text"], "earlier topic note")
+
+    def test_context_returns_selected_text_whole(self):
+        long = "decision " + "z" * 6000 + " END"
+        records = [{"type": "session", "id": "s", "cwd": self.root}, pi("user", "start " + "q" * 900, "u0")]
+        parent = "u0"
+        for i in range(12):
+            records.append(pi("assistant", long if i == 6 else f"step {i} " + "w" * 900, f"a{i}", parent))
+            parent = f"a{i}"
+        path = self.write("long.jsonl", records)
+        found, _ = self.run_cli("search", path, "--text", "decision")
+        value, raw = self.run_cli("context", "--ref", json.dumps(only(found)["results"][0]["ref"]))
+        self.assertLessEqual(len(raw), 8192)
+        selected = [r for r in value["results"] if r.get("selected")]
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(selected[0]["text"].endswith(" END"))
+        self.assertLessEqual(len(value["results"]), 7)
+        self.assertTrue(all(len(r["text"]) <= 300 for r in value["results"] if not r.get("selected")))
+
+    def test_table_fields_and_subcommand_errors(self):
+        path = self.write("table.jsonl", [{"type": "session", "id": "s", "cwd": self.root},
+                                          pi("user", "make a table", "u1"), pi("assistant", "table made", "a1", "u1")])
+        out = subprocess.run([sys.executable, str(SESSIONS), "search", str(path), "--text", "table",
+                              "--format", "table", "--project", ""], text=True, capture_output=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("harness", out.stdout.splitlines()[1])
+        self.assertIn("make a table", out.stdout)
+        found, _ = self.run_cli("search", path, "--text", "table")
+        ctx, _ = self.run_cli("context", "--ref", json.dumps(only(found)["results"][0]["ref"]), "--fields", "kind,text")
+        self.assertTrue(all(set(r) <= {"kind", "text", "selected"} for r in ctx["results"]))
+        bad = subprocess.run([sys.executable, str(SESSIONS), "search", "--bogus"], text=True, capture_output=True, timeout=30)
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("sessions.py search", bad.stderr)
+
     def test_branch_turn_not_record_proximity(self):
         path = self.write("branches.jsonl", [
             {"type": "session", "id": "s", "cwd": self.root},
@@ -186,7 +228,10 @@ class HistoryTests(unittest.TestCase):
         text = "x" * 100000 + " ERROR_MIDDLE " + "y" * 100000 + " final result"
         path = self.write("large.jsonl", [{"type": "session", "id": "s", "cwd": self.root},
             {"type": "message", "id": "r", "message": {"role": "toolResult", "toolCallId": "missing", "content": [{"type": "text", "text": text}], "isError": True}}])
-        value, raw = self.run_cli("search", path, "--text", "ERROR_MIDDLE")
+        hidden, _ = self.run_cli("search", path, "--text", "ERROR_MIDDLE")
+        self.assertEqual(only(hidden)["results"], [])
+        self.assertEqual(only(hidden)["excluded"]["tool_result"], 1)
+        value, raw = self.run_cli("search", path, "--text", "ERROR_MIDDLE", "--include-tools")
         self.assertLessEqual(len(raw), 8192)
         e = only(value)["results"][0]
         self.assertIn("ERROR_MIDDLE", e["text"])
@@ -908,12 +953,14 @@ class PhaseOneTests(HistoryTests):
         empty, _ = self.run_cli("SELECT count(*) AS n FROM rows", script=ROWS, stdin=b"[]")
         self.assertNotIn("status", empty)
 
-    def test_budget_dropped_rows_mark_partial(self):
+    def test_budget_dropped_rows_truncate_without_partial(self):
         rows = [{"text": "é" * 300, "i": i} for i in range(40)]
         value, raw = self.emitted({"results": rows}, 4096)
         self.assertLessEqual(len(raw), 4096)
         self.assertEqual(value["detail"]["level"], "rows")
-        self.assertEqual(value["status"], "partial")
+        self.assertNotIn("status", value)
+        self.assertFalse(value["delivery"]["complete"])
+        self.assertIn("rows_omitted", value["delivery"]["incomplete_reasons"])
         self.assertEqual(len(value["results"]) + value["omissions"]["results_budget"], 40)
 
     def test_capped_scan_marks_direct_and_piped_sql_partial(self):

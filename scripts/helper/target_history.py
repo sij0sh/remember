@@ -513,7 +513,8 @@ def deliver(document, args):
                             "hint": "Repeat the same options; history is live. Increase --max-bytes if no row fits."} if following < total else None
         if following < total:
             document["results_truncated"] = f"{len(document['results'])} of {total} rows shown; --offset {following} or raise --limit / --max-bytes"
-        if partial or following < total:
+        # Paging truncates; only a git or session coverage gap makes the history incomplete.
+        if partial:
             document["status"] = "partial"
     finish()
     while document["results"] and len(canonical(document)) + 1 > args.max_bytes:
