@@ -188,6 +188,18 @@ class PrimerTests(unittest.TestCase):
         text = self.cli()
         self.assertIn("Request recorded at the parent root should be found", text)
 
+    def test_symlinked_root_still_matches_the_resolved_project(self):
+        # Recordings carry the cwd the harness saw, which can be a symlinked path (macOS
+        # temp dirs are /var/... -> /private/var/...); the lookup must not miss them.
+        link = self.home / "link"
+        try:
+            link.symlink_to(self.repo, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.recording(root=link, request="SYMLINKED request about the importer")
+        text = self.cli()
+        self.assertIn("SYMLINKED request about the importer", text)
+
     def test_wrapper_filter_and_generic_continuation(self):
         self.recording(request="<environment_context>cwd=/tmp</environment_context>", extra=(
             {"type": "message", "id": "yes", "message": {"role": "user", "content": "yes"}},

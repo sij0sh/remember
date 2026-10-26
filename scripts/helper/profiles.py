@@ -133,10 +133,16 @@ def recorded_root(value, harness=None):
     return root if isinstance(root, str) and root else None
 
 
+def windows_path(value):
+    """True for a path written in native Windows form: drive letter or UNC share."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", value or "") or (value or "").startswith("\\\\"))
+
+
 def resolve_path(raw, cwd, root):
+    """(path, location): a drive or UNC base counts even when the raw path is relative."""
     if not isinstance(raw, str):
         return None, "unresolved"
-    pathmod = ntpath if re.match(r"^[A-Za-z]:[\\/]", raw or cwd or "") or raw.startswith("\\\\") else posixpath
+    pathmod = ntpath if windows_path(raw) or windows_path(cwd) else posixpath
     if not pathmod.isabs(raw) and cwd:
         raw = pathmod.join(cwd, raw)
     if not pathmod.isabs(raw):

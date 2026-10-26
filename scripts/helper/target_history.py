@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from . import commit_links, edit_hunks, git_file_history
 from .actions import lineages
-from .discovery import candidate_files
+from .discovery import candidate_files, normalized_root
 from .enrichment import parse_root_map, remap
 from .git_resolve import GitResolver
 from .options import DiscoveryOptions, ScanOptions, command_line
@@ -123,7 +123,7 @@ class TargetRepository:
             if not root:
                 return None
             path = os.path.join(root, path)
-        return os.path.normpath(remap(path, self.root_map)[0])
+        return normalized_root(remap(path, self.root_map)[0])
 
     def repo_path(self, event):
         return self.target["path"] if self.absolute(event) in self.aliases else None
@@ -181,7 +181,7 @@ def run(args, store, get_graph):
         old, sep, new = value.partition("=")
         if not sep or not old or not new:
             raise ValueError("--root-map requires OLD=NEW with nonempty paths")
-    args.project_root = [str(Path(p).expanduser().resolve()) for p in args.project_root]
+    args.project_root = [str(Path(p).expanduser()) for p in args.project_root]
     target, graph = resolve(args, store, get_graph)
     result = {"schema_version": 1, "operation": "history", "status": "ok", "target": target,
               "scope": {"repo": store.root, "retention": "transient", "history": "live", "symbol_identity": "not inferred across versions"},
@@ -201,7 +201,7 @@ def run(args, store, get_graph):
         if prefix:
             prefix = relative(prefix)
         lanes.append((repo, relative(str(Path(prefix, target["path"]))), "explicit_repository_association"))
-    aliases = {os.path.normpath(str(Path(store.root, target["path"]))): {"basis": "current_path", "path": target["path"]}}
+    aliases = {normalized_root(Path(store.root, target["path"])): {"basis": "current_path", "path": target["path"]}}
     commits, git_coverage = {}, []
     for repo, path, basis in lanes:
         if not repo:
@@ -210,11 +210,11 @@ def run(args, store, get_graph):
         found, changes, coverage = git_file_history.history(resolver, repo, args.max_commits, path)
         git_coverage.append({"repo": repo, "path": path, "basis": basis, **coverage,
                              "state": "unavailable" if coverage.get("error") else "searched" if coverage["complete"] else "partial"})
-        aliases[os.path.normpath(str(Path(repo, path)))] = {"basis": basis, "repo": repo, "path": path}
+        aliases[normalized_root(Path(repo, path))] = {"basis": basis, "repo": repo, "path": path}
         for change in changes:
             if change["status"] == "renamed":
                 for old in (change["old_path"], change["new_path"]):
-                    aliases[os.path.normpath(str(Path(repo, old)))] = {"basis": "git_rename", "repo": repo,
+                    aliases[normalized_root(Path(repo, old))] = {"basis": "git_rename", "repo": repo,
                                                                  "path": old, "sha": change["sha"]}
         for commit in found:
             commits[(commit["repo_id"], commit["sha"])] = commit
@@ -252,7 +252,7 @@ def run(args, store, get_graph):
         mention_paths = []
         recorded_root = recording.get("root")
         if recorded_root:
-            recorded_root = os.path.normpath(remap(recorded_root, repository.root_map)[0])
+            recorded_root = normalized_root(remap(recorded_root, repository.root_map)[0])
             for absolute in aliases:
                 try:
                     if os.path.commonpath([recorded_root, absolute]) == recorded_root:

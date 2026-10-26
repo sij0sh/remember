@@ -3,9 +3,10 @@ import json
 import ntpath
 import os
 import posixpath
+from functools import lru_cache
 from pathlib import Path
 
-from .profiles import PROFILES, detected, recorded_root
+from .profiles import PROFILES, detected, recorded_root, windows_path
 from .records import new_scope, records
 
 # Default archive locations per harness; settings.json at the skill root overrides them.
@@ -47,7 +48,25 @@ def default_recordings():
 
 
 def normalized_root(s):
-    return ntpath.normcase(ntpath.normpath(s)) if "\\" in s or (len(s) > 1 and s[1] == ":") else posixpath.normpath(s)
+    """Canonical project root for string comparisons; cached because discovery is per-file."""
+    return _normalized_root(str(s))
+
+
+@lru_cache(maxsize=4096)
+def _normalized_root(value):
+    # A recording stores the cwd its harness saw, which can be the symlinked macOS
+    # /var/... while the queried project is already /private/var/...; on Windows the
+    # same mismatch shows up as short names, junctions or casing. Compare canonically.
+    path = os.path.expanduser(value)
+    # Resolve only paths in the host's own form: a POSIX root recorded on another OS must
+    # keep its shape instead of gaining a drive letter under os.path.realpath on Windows.
+    if os.path.isabs(path) and (os.name != "nt" or windows_path(path)):
+        path = os.path.realpath(path)
+    if path.startswith("\\\\?\\UNC\\"):
+        path = "\\\\" + path[8:]
+    elif path.startswith("\\\\?\\"):
+        path = path[4:]
+    return ntpath.normcase(ntpath.normpath(path)) if "\\" in path or (len(path) > 1 and path[1] == ":") else posixpath.normpath(path)
 
 
 def sources(options, scope):

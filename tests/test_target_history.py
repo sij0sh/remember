@@ -10,9 +10,11 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 import remember
 from helper.edit_hunks import anchor
 from helper.graph_store import Store
+from test_sessions import split_line
 
 
 class TargetHistoryTests(unittest.TestCase):
@@ -81,8 +83,8 @@ class TargetHistoryTests(unittest.TestCase):
         lead = next(r for r in out["results"] if r["basis"] == "recorded_definition_at_edit")
         self.assertEqual(lead["symbols"][0]["qualname"], "target")
         command = lead["next"][0]["argv"]
-        import shlex
-        expanded = subprocess.check_output(shlex.split(command), text=True)
+        # Windows argv quoting differs from shlex; reuse the portable inverse of command_line.
+        expanded = subprocess.check_output(split_line(command), text=True)
         self.assertIn("Reject the eager approach", expanded)
         self.assertTrue(any("exchange" in n["argv"] for n in lead["next"]))
         self.assertEqual(out["coverage"]["git"][0]["state"], "unavailable")
@@ -122,6 +124,17 @@ class TargetHistoryTests(unittest.TestCase):
         out = self.history("a.py", "--project-root", str(old), "--root-map", f"{old}={self.repo}")
         self.assertTrue(out["results"])
         self.assertEqual(out["coverage"]["sessions"]["project_also"], [str(old)])
+
+    def test_symlinked_recorded_root_matches_the_resolved_project(self):
+        # Same class of mismatch: the recording stores a symlinked cwd, the GUI/graph root is resolved.
+        link = self.home / "link"
+        try:
+            link.symlink_to(self.repo, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.recording(root=link)
+        out = self.history()
+        self.assertEqual({r["evidence"]["session"] for r in out["results"]}, {"past"})
 
     def test_split_repository_association(self):
         old = self.home / "parent"
