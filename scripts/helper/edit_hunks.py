@@ -128,13 +128,11 @@ def anchor(block, new_start, current):
     if not block:
         return "no_new_text", None
     size, start = len(block), max(new_start - 1, 0)
-    if [l.rstrip("\r") for l in current[start:start + size]] == [l.rstrip("\r") for l in block]:
-        return "exact", start
     first = block[0].rstrip("\r")
     hits = [i for i, line in enumerate(current) if line.rstrip("\r") == first
             and [l.rstrip("\r") for l in current[i:i + size]] == [l.rstrip("\r") for l in block]]
     if len(hits) == 1:
-        return "shifted", hits[0]
+        return ("exact" if hits[0] == start else "shifted"), hits[0]
     return ("ambiguous" if hits else "not_found"), None
 
 

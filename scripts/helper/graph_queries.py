@@ -1,5 +1,6 @@
 """Typed traversal, change impact and read-only SQL over one pinned source graph."""
 import collections
+import fnmatch
 import json
 import math
 import os
@@ -20,6 +21,7 @@ class Graph:
         self.snapshot, self.body = snapshot, body
         self.nodes = {n["id"]: n for n in body["nodes"]}
         self.files = {n["path"]: n for n in body["nodes"] if n["kind"] == "file"}
+        self._words = None
 
     def public(self, node):
         return {**node, "ref": reference(self.snapshot, "nodes", node["id"])}
@@ -123,7 +125,8 @@ class Graph:
                         "predicate": edge["predicate"], "resolution": edge["resolution"]}
                 reached[target] = (distance + 1, trail + [step])
                 queue.append(target)
-        results = [{**self.public(self.nodes[n]), "distance": distance, "witness": trail}
+        results = [{**self.public(self.nodes[n]), "distance": distance,
+                    "via": trail[-1]["predicate"] if trail else None, "witness": trail}
                    for n, (distance, trail) in sorted(reached.items(), key=lambda p: (p[1][0], self.nodes[p[0]]["key"]))
                    if n not in seeds]
         return results, {"complete_within_predicates": not bounds, "bounds": sorted(bounds),
@@ -156,9 +159,69 @@ class Graph:
                                     "basis": "literal_match"})
         return sorted(results, key=lambda r: (r.get("path") or "", r.get("line") or 0, r["kind"]))
 
+    def words(self):
+        """Identifier -> [(path, line)] over parsed code, import lines excluded; built once per graph."""
+        if self._words is None:
+            self._words = collections.defaultdict(list)
+            # Import statements name symbols without using them.
+            imports = {(e["evidence"]["path"], line) for e in self.body["edges"]
+                       if e["predicate"] == "IMPORTS" and e.get("evidence")
+                       for line in range(e["evidence"]["line"], e["evidence"]["end_line"] + 1)}
+            for row in self.body["source"]["files"]:
+                node = self.files.get(row["path"], {})
+                if row["text"] is None or node.get("parse_state") not in ("parsed", "parsed_with_errors"):
+                    continue
+                for number, line in enumerate(row["text"].splitlines(), 1):
+                    if (row["path"], number) in imports:
+                        continue
+                    for word in set(WORD.findall(line)):
+                        self._words[word].append((row["path"], number))
+        return self._words
+
+    def mentions(self, ident):
+        """Source lines naming a symbol outside its declaration and outside edges that reach it."""
+        node = self.nodes[ident]
+        if node["kind"] != "symbol":
+            return []
+        covered = {(e["evidence"]["path"], line) for e in self.body["edges"]
+                   if e["target"] == ident and e["predicate"] != "DECLARES" and e.get("evidence")
+                   for line in range(e["evidence"]["line"], e["evidence"]["end_line"] + 1)}
+        return [{"path": path, "line": line} for path, line in self.words().get(node["name"], [])
+                if (path, line) not in covered
+                and not (path == node["path"] and node["line"] <= line <= node["end_line"])]
+
     def document(self, operation, results, **scope):
         return {"operation": operation, "snapshots": [self.snapshot], "results": results,
                 "coverage": self.body["coverage"], "gaps": self.body["gaps"], "scope": scope}
+
+
+WORD = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def path_matches(path, globs):
+    """A glob matches with fnmatch (`*` crosses `/`); a plain path matches itself and everything under it."""
+    if not path:
+        return False
+    for glob in globs:
+        if any(c in glob for c in "*?["):
+            if fnmatch.fnmatchcase(path, glob):
+                return True
+        elif path == glob.rstrip("/") or path.startswith(glob.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def unresolved_mentions(graph, target, exclude_paths=()):
+    """A gap when source names a symbol target where the graph holds no edge: empty results mean unknown."""
+    hits = graph.resolve(target)
+    if len(hits) != 1:
+        return None
+    rows = [m for m in graph.mentions(hits[0]) if m["path"] not in exclude_paths]
+    if not rows:
+        return None
+    return {"area": "mentions", "reason": "unresolved_mentions", "target": target, "count": len(rows),
+            "examples": rows[:10], "meaning": "Source names this symbol where the graph has no edge; "
+            "read these lines before treating a short or empty result as complete."}
 
 
 # One file above this share of nodes skews fan-in, size and node counts.
@@ -283,6 +346,11 @@ def impact(graph, targets, base=None, depth=2, max_nodes=1000, seconds=5.0):
                 gaps.append({"area": "traversal", "reason": "bounded", "side": side, "direction": direction,
                              "bounds": limits["bounds"], "frontier": limits["frontier"]})
         paths = {current.nodes[n].get("path") for n in reached}
+        if not base:
+            for target in targets:
+                gap = unresolved_mentions(current, target, paths)
+                if gap:
+                    gaps.append(gap)
         tests = collections.defaultdict(list)
         for edge in current.body["edges"]:
             if edge["predicate"] == "TESTS" and edge["target"] in reached:

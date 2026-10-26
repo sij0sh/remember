@@ -62,19 +62,23 @@ def _store_text(event, text, options, scope):
     event.update(shown, text_state="budget_omitted")
 
 
-def scan_file(path, options, scope):
+def scan_file(path, options, scope, ranges=None):
     profile = None
     events = []
     root = None
     external_sid = version = parent_session = None
     sid = str(Path(path).absolute())
+    if ranges:
+        # A range scan deliberately skips bytes; do not call it complete.
+        scope["scan_complete"] = False
+        scope["range_scan"] = True
     if options.harness == "auto":
         from .discovery import header
         harness, hinted_root, _ = header(path, options.max_record_bytes, min(262144, options.max_scan_bytes))
         if harness:
             profile, root = PROFILES[harness], hinted_root
     # Only small projections survive a record; payloads remain in the source.
-    for ref, record, error in records(path, scope, options.max_record_bytes, options.max_scan_bytes):
+    for ref, record, error in records(path, scope, options.max_record_bytes, options.max_scan_bytes, ranges):
         if scope["events_projected"] >= options.max_events:
             scope["scan_complete"] = False
             scope["event_limit_reached"] = True
@@ -109,12 +113,12 @@ def scan_file(path, options, scope):
                     "system" if kind == "instruction" else "harness")
             e = {"kind": kind, "role": role, "origin": origin, "channel": channel,
                  "harness": profile["harness"] if profile else "unknown", "session": sid,
-                 "state": state, "event_id": f"{Path(path).name}:{ref['line']}:{local}",
+                 "state": state, "event_id": f"{Path(path).name}:{ref['line'] if ref['line'] is not None else ref['offset']}:{local}",
                  "recording_id": str(Path(path).absolute()),
                  "native_type": _native(record, "type"),
                  "native_subtype": _native(record, "subtype"),
                  "profile_version": profile.get("version") if profile else None,
-                 "ref": event_ref, "order": ref["line"], **fields}
+                 "ref": event_ref, "order": ref["line"] if ref["line"] is not None else ref["offset"], **fields}
             if kind == "command" or (kind == "tool_call" and fields.get("operation") == "command"):
                 # One row per shell invocation in every harness: a codex command, a pi/claude-code shell tool call.
                 e["is_shell"] = True
@@ -328,7 +332,7 @@ def scan_file(path, options, scope):
             scope["unpaired_results"] += 1
     scope["calls_without_result"] += sum(e["kind"] == "tool_call" and "result_ref" not in e for e in events)
     return {"file": str(Path(path).absolute()), "session": sid, "parent_session": parent_session, "root": root,
-            "harness_version": version,
+            "harness_version": version, "sampled": bool(ranges),
             "harness": profile["harness"] if profile else "unknown", "events": events}
 
 

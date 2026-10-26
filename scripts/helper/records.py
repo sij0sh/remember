@@ -14,60 +14,89 @@ def new_scope():
             "representation_variants": 0, "recordings_with_parent": 0}
 
 
-def records(path, scope, max_record, max_scan):
-    """Drain giant lines in bounded chunks; preserve byte offsets and hashes."""
+def records(path, scope, max_record, max_scan, ranges=None):
+    """Drain giant lines in bounded chunks; preserve byte offsets and hashes.
+
+    ``ranges`` is an optional list of ``(start, end)`` byte ranges. A nonzero
+    start snaps forward to the next line boundary. Records from a tail range
+    carry ``line=None`` because their line number is not known without reading
+    the skipped bytes; their offset and hash remain exact.
+    """
+    ranges = ranges or [(0, None)]
     with open(path, "rb") as stream:
-        line_no = 0
-        while True:
-            offset = stream.tell()
-            remaining = max_scan - scope["bytes_scanned"]
-            if remaining <= 0:
-                scope["scan_complete"] = False
-                scope["scan_limit_reached"] = True
-                return
-            line = stream.readline(min(max_record + 1, remaining))
-            if not line:
-                return
-            line_no += 1
-            digest = hashlib.sha256(line)
-            length = len(line)
-            scope["bytes_scanned"] += length
-            oversized = length > max_record
-            terminated = line.endswith(b"\n")
-            if not terminated and scope["bytes_scanned"] >= max_scan and stream.peek(1):
-                scope["scan_complete"] = False
-                scope["scan_limit_reached"] = True
-                return
-            while not terminated and len(line) and length >= max_record + 1:
+        for start, end in ranges:
+            if start:
+                # Start at a complete line, never in the middle of a record.
+                stream.seek(start - 1)
+                if stream.read(1) != b"\n":
+                    stream.readline()
+            line_no = 0
+            while True:
+                offset = stream.tell()
+                if end is not None and offset >= end:
+                    break
                 remaining = max_scan - scope["bytes_scanned"]
                 if remaining <= 0:
                     scope["scan_complete"] = False
                     scope["scan_limit_reached"] = True
                     return
-                chunk = stream.readline(min(65536, remaining))
-                if not chunk:
+                limit = min(max_record + 1, remaining)
+                if end is not None:
+                    limit = min(limit, end - offset)
+                if limit <= 0:
                     break
-                digest.update(chunk)
-                length += len(chunk)
-                scope["bytes_scanned"] += len(chunk)
-                terminated = chunk.endswith(b"\n")
-            ref = {"file": str(Path(path).absolute()), "line": line_no, "offset": offset,
-                   "length": length, "sha256": digest.hexdigest()}
-            scope["records_scanned"] += 1
-            if oversized:
-                scope["oversized_records"] += 1
-                yield ref, None, "oversized_record"
-                continue
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-                if not isinstance(value, dict):
-                    raise ValueError("record is not an object")
-                yield ref, value, None
-            except (ValueError, UnicodeDecodeError, RecursionError):
-                scope["malformed_records"] += 1
-                yield ref, None, "malformed_record"
+                line = stream.readline(limit)
+                if not line:
+                    break
+                line_no += 1
+                digest = hashlib.sha256(line)
+                length = len(line)
+                scope["bytes_scanned"] += length
+                oversized = length > max_record
+                terminated = line.endswith(b"\n")
+                if not terminated and scope["bytes_scanned"] >= max_scan and stream.peek(1):
+                    scope["scan_complete"] = False
+                    scope["scan_limit_reached"] = True
+                    return
+                while not terminated and len(line) and length >= max_record + 1:
+                    remaining = max_scan - scope["bytes_scanned"]
+                    if remaining <= 0:
+                        scope["scan_complete"] = False
+                        scope["scan_limit_reached"] = True
+                        return
+                    take = min(65536, remaining)
+                    if end is not None:
+                        take = min(take, end - stream.tell())
+                        if take <= 0:
+                            break
+                    chunk = stream.readline(take)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    length += len(chunk)
+                    scope["bytes_scanned"] += len(chunk)
+                    terminated = chunk.endswith(b"\n")
+                # A head range may end mid-record: that partial record is not evidence.
+                if end is not None and not terminated and stream.tell() >= end:
+                    break
+                ref = {"file": str(Path(path).absolute()),
+                       "line": (line_no if start == 0 else None), "offset": offset,
+                       "length": length, "sha256": digest.hexdigest()}
+                scope["records_scanned"] += 1
+                if oversized:
+                    scope["oversized_records"] += 1
+                    yield ref, None, "oversized_record"
+                    continue
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError("record is not an object")
+                    yield ref, value, None
+                except (ValueError, UnicodeDecodeError, RecursionError):
+                    scope["malformed_records"] += 1
+                    yield ref, None, "malformed_record"
 
 
 def safe_ref(value):

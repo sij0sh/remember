@@ -6,11 +6,11 @@ A change can be five lines long and still affect half the application. A cleanup
 
 remember helps agents investigate before they commit to a solution. It maps files, symbols, imports, and supported calls into a queryable graph, then brings in Git history and past coding sessions when they help explain the code.
 
-Start with the repository you have. No Git history or session recordings required. When history is available, use it to recover prior requests, rejected options, and failed attempts—without maintaining another set of memory files.
+Start with the repository you have. No Git history or session recordings required. When history is available, use it to recover prior requests, rejected options, and failed attempts-without maintaining another set of memory files.
 
 ## Why use it?
 
-**See beyond the file you're editing.** Follow consumers and dependencies, inspect the paths connecting them, and find candidate tests. A small request may deserve a small patch—or a closer look at where the responsibility belongs.
+**See beyond the file you're editing.** Follow consumers and dependencies, inspect the paths connecting them, and find candidate tests. A small request may deserve a small patch-or a closer look at where the responsibility belongs.
 
 **Pick up earlier work with its context intact.** Search recorded pi, Codex, and Claude Code sessions. Human requests, agent proposals, and tool outcomes stay distinct, so an attempted fix doesn't become a remembered success.
 
@@ -40,7 +40,14 @@ python3 "$S/remember.py" impact src/store.py
 
 Graph tools require Python 3.11+ and work without Git or additional packages. Python syntax extraction is built in; optional parsers extend language support.
 
-Results are JSON, ready for an agent to inspect or another tool to consume. This abridged example shows a possible consumer and a candidate test:
+Bare `map` prints whole source for small repositories and a directory summary
+for larger ones. It also prints a short recent-work primer: the last 3 recorded
+sessions (first request, last agent claim, edited files) and last 3 non-merge
+commits (subject, files, lines, top paths), plus working-tree state. The primer
+is about 2 KB, excludes the current session, and is never retained. Use
+`map --no-primer` to omit it, `--primer-depth N` to change the window, or
+`map --format json --primer` for structured data. Other results default to JSON
+(`--format table` gives compact rows; `--fields` selects columns). JSON is ready for an agent to inspect or another tool to consume. This abridged example shows a possible consumer and a candidate test:
 
 ```json
 {
@@ -64,14 +71,15 @@ Full results also carry snapshot references and the relationship edges supportin
 | Question | Start with |
 |---|---|
 | What is in this repository? | `map` |
-| Where does this name appear? | `find TEXT` |
+| Where does this name appear? | `find TEXT --path GLOB --not-path GLOB` |
+| Which structural candidates deserve a closer read? | `analyze fanin`, `orphans`, `cycles`, `untested`, `largest` |
 | What imports or calls this? | `neighbors TARGET --direction in` |
 | How are these two parts connected? | `paths A B` |
 | What could this change affect? | `impact TARGET` |
 | How did the code and its potential impact change? | Capture snapshots, then `impact --base ID --head ID` |
 | What was requested, discussed, or tried before? | `sessions.py search`, then `context` |
 | Which failures keep recurring? | `sessions.py recurrence` |
-| Where is code duplicated? | `sessions.py duplicates` |
+| Where are source windows duplicated (Git repository, not sessions)? | `sessions.py duplicates` |
 | What evidence supports this result? | `show REF` |
 
 These tools help an agent test its assumptions: whether a fix reaches the right consumers, whether similar code has different responsibilities, or whether an earlier attempt already exposed a constraint. The graph supplies leads; source and recorded evidence give those leads meaning.
@@ -101,14 +109,17 @@ python3 "$S/remember.py" query --sql \
 
 ## Recover the history
 
-Source shows the current implementation. Recordings can help explain how it got there.
+Source shows the current implementation. `history TARGET` brings back bounded Git and recording leads, with original-context expansion commands. Targeted graph results include a `history.next` continuation; retrieval is explicit and transcript text is not retained in graph reports. Bare `map` is the one exception: its recent-work primer reads a bounded head/tail sample of recent recordings and prints it transiently.
 
 ```bash
+python3 "$S/remember.py" history src/retry.py
 python3 "$S/sessions.py" search --text 'retry policy' --human
 python3 "$S/sessions.py" context --ref '<returned ref>'
 ```
 
 Search defaults to the current project. Use `--project ''` to search all recorded projects, or choose a harness with `--harness pi`, `--harness codex`, or `--harness claude-code`.
+
+For historical roots, repository splits, matching and coverage, see [history tools](references/history.md).
 
 For questions spanning prior work and commits, `sessions.py select` exposes SQL views:
 

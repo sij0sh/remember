@@ -159,13 +159,15 @@ class GraphTests(unittest.TestCase):
         self.write("src/api.ts", "import { save } from './index';\nimport * as store from './store';\n"
                                  "import React from 'react';\n"
                                  "class Api {\n  run() { return this.helper(); }\n  helper() { return save(1) + store.load(); }\n}\n"
-                                 "function shadow(save: number) { return save; }\n"
+                                 "function shadow(save: any) { return save(1); }\n"
                                  "export function main(obj: any) { obj.save(1); React.render(); return new Api().run(); }\n")
         graph = self.graph()
         self.assertEqual(self.calls(graph), {
             (("src/api.ts", "Api.run"), ("src/api.ts", "Api.helper")),
-            (("src/api.ts", "Api.helper"), ("src/store.ts", "load"))})
-        # save is also a parameter in shadow(), so the import binding is not unique.
+            (("src/api.ts", "Api.helper"), ("src/store.ts", "load")),
+            (("src/api.ts", "Api.helper"), ("src/store.ts", "save")),
+            (("src/api.ts", "main"), ("src/api.ts", "Api"))})
+        # Inside shadow(), save is both the import and a parameter, so that call is not resolved.
         reasons = {g["reason"]: g for g in graph.body["gaps"] if g["area"] == "calls" and g["path"] == "src/api.ts"}
         self.assertIn("multiple_bindings", reasons)
         self.assertIn("dynamic_receiver", reasons)
@@ -194,9 +196,48 @@ class GraphTests(unittest.TestCase):
             (("src/lib.rs", "World::tick"), ("src/store.rs", "save")),
             (("src/lib.rs", "World::tick"), ("src/store.rs", "load")),
             (("src/lib.rs", "run"), ("src/lib.rs", "World::new")),
+            (("src/lib.rs", "run"), ("src/lib.rs", "World::tick")),
             (("src/lib.rs", "run"), ("src/lib.rs", "helper"))})
         reasons = {g["reason"] for g in graph.body["gaps"] if g["area"] == "calls"}
-        self.assertEqual(reasons, {"dynamic_receiver", "external_or_unbound"})
+        self.assertEqual(reasons, {"external_or_unbound"})
+
+    def test_rust_calls_follow_pub_use_and_typed_receivers(self):
+        self.write("Cargo.toml", '[package]\nname = "demo"\n')
+        self.write("src/lib.rs", "mod numeric;\npub use numeric::parse;\npub struct World;\n"
+                                 "impl World {\n    pub fn create() -> Result<Self, ()> { Ok(World) }\n"
+                                 "    pub fn label() -> String { String::new() }\n    pub fn pour(&mut self) {}\n}\n")
+        self.write("src/numeric.rs", "pub fn parse() {}\n")
+        self.write("src/main.rs", "use demo::{parse, World};\n"
+                                  "fn main() {\n    let mut world = World::create().map_err(|e| e).unwrap();\n"
+                                  "    parse();\n    command(&mut world);\n    let name = World::label();\n    name.pour();\n}\n"
+                                  "fn command(world: &mut World) { world.pour(); }\n")
+        graph = self.graph()
+        calls = self.calls(graph)
+        self.assertLessEqual({(("src/main.rs", "main"), ("src/numeric.rs", "parse")),
+                              (("src/main.rs", "main"), ("src/lib.rs", "World::create")),
+                              (("src/main.rs", "command"), ("src/lib.rs", "World::pour"))}, calls)
+        # label() returns String, not World, so `name.pour()` stays unresolved.
+        self.assertNotIn((("src/main.rs", "main"), ("src/lib.rs", "World::pour")), calls)
+        rules = {e["rule"] for e in graph.body["edges"] if e["predicate"] == "CALLS_STATIC"}
+        self.assertIn("rust_receiver_type", rules)
+
+    def test_typescript_typed_receivers_and_constructors(self):
+        self.write("src/store.ts", "export class Store {\n  save() { return 1; }\n}\n")
+        self.write("src/index.ts", "export { Store } from './store';\n")
+        self.write("src/app.ts", "import { Store } from './index';\n"
+                                 "export function make() { const s = new Store(); return s.save(); }\n"
+                                 "export function use(store: Store) { return store.save(); }\n"
+                                 "export function other(s: any) { return s.save(); }\n")
+        graph = self.graph()
+        self.assertEqual(self.calls(graph), {
+            (("src/app.ts", "make"), ("src/store.ts", "Store")),
+            (("src/app.ts", "make"), ("src/store.ts", "Store.save")),
+            (("src/app.ts", "use"), ("src/store.ts", "Store.save"))})
+
+    def test_python_class_call_is_construction(self):
+        self.write("model.py", "class Model:\n    pass\n")
+        self.write("app.py", "from model import Model\ndef build():\n    return Model()\n")
+        self.assertEqual(self.calls(self.graph()), {(("app.py", "build"), ("model.py", "Model"))})
 
     def test_missing_optional_parser_stays_visible(self):
         from helper import code_symbols
@@ -475,7 +516,7 @@ class GraphTests(unittest.TestCase):
         self.assertIn("not shown: package-lock.json (lockfile)", text)
         self.assertIn("not captured but used: .tools/ (referenced at run.sh:1)", text)
         self.assertEqual(sorted(self.cache.rglob("*.md")), [])
-        listing = self.cli("map", "--whole-repo-lines", "5")
+        listing = self.cli("map", "--whole-repo-lines", "0")
         self.assertIn("core.py", {r["path"] for r in listing["results"]})
 
     def test_paging_is_pinned_not_recomputed(self):
@@ -527,7 +568,7 @@ class GraphTests(unittest.TestCase):
     def test_empty_directory_and_empty_query_tables(self):
         graph = self.graph()
         self.assertEqual(query(graph, "SELECT count(*) AS n FROM edges")["results"], [{"n": 0}])
-        self.cli("map")
+        self.cli("map", "--format", "json")
 
     def test_describe_is_bounded_without_source_capture(self):
         out = self.cli("describe", "--max-bytes", "2048")

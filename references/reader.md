@@ -28,6 +28,13 @@ Historical source profiles live in `scripts/profiles`; recording roots in
 malformed and oversized records remain visible as gaps; recorded branch/parent
 links are preserved where available. Text may be omitted by scan or output budgets.
 
+Bare `map` uses the same recording profiles for a recent-work primer. It reads
+at most 1 MB from the head and 8 MB from the tail of a large recording, keeps
+only normalized events, and caps text per file. Long sessions are therefore
+sampled, not fully scanned; `coverage.sessions.sampled` is true. The primer is
+printed, never saved with the report. Controls and field details are in
+[history](history.md).
+
 Historical output is one JSON envelope. `scope` records the scanned selection;
 `omissions` records missing rows/inputs; `detail` records display clipping; `next`
 provides continuations. SQL runs before output paging, but input scan/text limits

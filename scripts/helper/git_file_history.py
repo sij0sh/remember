@@ -96,15 +96,23 @@ def _log(resolver, repo, *args):
                         timeout=60)
 
 
-def history(resolver, repo, max_commits, follow=None):
-    """Commits reachable from HEAD, newest first; ``follow`` narrows to one path across renames."""
+def history(resolver, repo, max_commits, follow=None, no_merges=False):
+    """Commits reachable from HEAD, newest first; ``follow`` narrows to one path across renames.
+
+    Merge commits are included by default. ``no_merges`` removes them before the
+    limit is applied, so the caller still receives ``max_commits`` ordinary commits.
+    """
     repo_id = resolver.identity(repo)
-    args = ["-n", str(max_commits + 1), "HEAD"]
+    args = ["-n", str(max_commits + 1)]
+    if no_merges:
+        args.append("--no-merges")
+    args.append("HEAD")
     if follow:
         args += ["--follow", "--", follow]
     raw = _log(resolver, repo, *args)
     if raw is None:
-        return [], [], {"complete": False, "error": "git log failed (no commits or not a repository)"}
+        return [], [], {"complete": False, "error": "git log failed (no commits or not a repository)",
+                        "no_merges": no_merges}
     commits, changes = _parse(raw, repo_id, repo, "follow" if follow else "head_log")
     complete = len(commits) <= max_commits
     if not complete:
@@ -112,7 +120,7 @@ def history(resolver, repo, max_commits, follow=None):
         commits = commits[:max_commits]
         gone = {c["sha"] for c in dropped}
         changes = [c for c in changes if c["sha"] not in gone]
-    return commits, changes, {"complete": complete, "commits_limit": max_commits}
+    return commits, changes, {"complete": complete, "commits_limit": max_commits, "no_merges": no_merges}
 
 
 def commits_by_sha(resolver, repo, shas):

@@ -1,8 +1,8 @@
 interface:
   display_name: Remember
-  short_description: Map code relationships and potential change impact
-  default_prompt: Use $remember to understand this repository and assess the proposed
-    change.
+  short_description: Understand current code with relevant Git and session history
+  default_prompt: Use $remember to understand this repository, recover relevant history, and assess
+    the proposed change.
 policy:
   products:
   - chatgpt

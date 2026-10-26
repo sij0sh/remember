@@ -10,7 +10,7 @@ PREDICATES = {
     "CONTAINS": "Directory/file containment; never an impact propagation edge.",
     "DECLARES": "Source file declares a symbol.",
     "IMPORTS": "Literal import mapped by the documented resolver rule; not a call.",
-    "CALLS_STATIC": "Python, TS/JS or Rust call with one supported lexical binding; not observed execution.",
+    "CALLS_STATIC": "Python, TS/JS or Rust call (or construction) with one supported binding; not observed execution.",
     "TESTS": "Test file imports an implementation file; association, not assertion coverage.",
 }
 DEPENDENCIES = ("IMPORTS", "CALLS_STATIC")
@@ -258,6 +258,8 @@ class PythonCalls:
             return None, "dynamic_call"
         if kind == "symbol":
             node = self.b.nodes[value]
+            if node.get("symbol_kind") == "class":
+                return value, None  # Calling a class constructs it.
             if node.get("symbol_kind") not in ("function", "async_function"):
                 return None, "class_or_method_dispatch"
             return value, None

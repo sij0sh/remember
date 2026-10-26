@@ -3,7 +3,8 @@
 ## Graph SQL: SQLite
 
 `remember.py query --sql SQL [--param NAME=VALUE]` queries one pinned graph.
-Uses Python's SQLite; no installation needed. `describe` lists table columns:
+Uses Python's SQLite; no installation needed. Single-quote string literals
+(or use bound parameters); DuckDB-only functions are unavailable. `describe` lists table columns:
 
 | Table | Grain |
 |---|---|
@@ -18,7 +19,9 @@ python3 "$S/remember.py" query --sql 'SELECT n.path, count(DISTINCT e.source) AS
 
 Only read-only SELECT/CTE statements are allowed. Source data and nested evidence
 are JSON strings in SQL. Bound parameters are strings. Queries run on all captured
-rows before delivery paging; `--max-query-rows` caps retained query output and
+rows before delivery paging. Query delivery defaults to 200 rows; `--limit N`
+raises delivery and retention together. The compatibility `--max-query-rows`
+option sets a retention floor (default 1,000), raised to fit the requested page;
 `--seconds` bounds execution. Capture gaps still apply to aggregates. Counts of
 imports are not call counts or failure probabilities.
 
