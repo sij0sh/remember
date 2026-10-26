@@ -288,8 +288,9 @@ class HistoryTests(unittest.TestCase):
         self.write("rootless.jsonl", [pi("user", "no root", "u1")])
         value, _ = self.run_cli("projects", self.directory, "--harness", "pi")
         roots = {r["root"]: r["recordings"] for r in value["results"]}
-        self.assertEqual({(os.path.normcase(root) if root else None): n for root, n in roots.items()},
-                         {os.path.normcase(self.root): 1, "/old/checkout": 2, None: 1})
+        key = lambda root: os.path.normcase(root) if root else None
+        self.assertEqual({key(root): n for root, n in roots.items()},
+                         {key(self.root): 1, key("/old/checkout"): 2, None: 1})
         self.assertEqual(value["scope"]["project_unknown"], 1)
         self.assertNotIn("files_scanned", value["scope"])
         self.assertIn("--project", value["next"][0]["argv"])
