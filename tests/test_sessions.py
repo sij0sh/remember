@@ -61,7 +61,7 @@ class HistoryTests(unittest.TestCase):
 
     def write(self, name, records):
         path = self.directory / name
-        path.write_text("".join(json.dumps(v) + "\n" for v in records))
+        path.write_text("".join(json.dumps(v) + "\n" for v in records), newline="")
         return path
 
     def run_cli(self, *args, code=0, script=SESSIONS, stdin=None, cwd=None, env=None):
@@ -288,7 +288,8 @@ class HistoryTests(unittest.TestCase):
         self.write("rootless.jsonl", [pi("user", "no root", "u1")])
         value, _ = self.run_cli("projects", self.directory, "--harness", "pi")
         roots = {r["root"]: r["recordings"] for r in value["results"]}
-        self.assertEqual(roots, {self.root: 1, "/old/checkout": 2, None: 1})
+        self.assertEqual({(os.path.normcase(root) if root else None): n for root, n in roots.items()},
+                         {os.path.normcase(self.root): 1, "/old/checkout": 2, None: 1})
         self.assertEqual(value["scope"]["project_unknown"], 1)
         self.assertNotIn("files_scanned", value["scope"])
         self.assertIn("--project", value["next"][0]["argv"])
@@ -318,16 +319,16 @@ class HistoryTests(unittest.TestCase):
         recordings = home / ".pi" / "agent" / "sessions" / "--repo--"
         recordings.mkdir(parents=True)
         (recordings / "pi.jsonl").write_text(json.dumps({"type": "session", "id": "s", "cwd": self.root}) + "\n" +
-            json.dumps(pi("user", "default recordings request", "u1")) + "\n")
-        value, raw = self.run_cli(env={"HOME": str(home)})
+            json.dumps(pi("user", "default recordings request", "u1")) + "\n", newline="")
+        value, raw = self.run_cli(env={"HOME": str(home), "USERPROFILE": str(home)})
         pi_group = next(g for g in value["harnesses"] if g["harness"] == "pi")
         self.assertEqual(pi_group["requests"][0]["text"], "default recordings request")
         self.assertEqual(value["scope"]["project_filter"], self.root)
         empty = self.directory / "empty-home"
         empty.mkdir()
-        value, _ = self.run_cli(env={"HOME": str(empty)}, code=2)
+        value, _ = self.run_cli(env={"HOME": str(empty), "USERPROFILE": str(empty)}, code=2)
         self.assertIn("sessions", value["results"][0]["error"])
-        explicit, _ = self.run_cli("overview", path := recordings / "pi.jsonl", env={"HOME": str(empty)})
+        explicit, _ = self.run_cli("overview", path := recordings / "pi.jsonl", env={"HOME": str(empty), "USERPROFILE": str(empty)})
         self.assertEqual(only(explicit)["requests"][0]["text"], "default recordings request")
 
     def home_with_every_harness(self):
@@ -344,12 +345,12 @@ class HistoryTests(unittest.TestCase):
         }
         for path, records in layouts.items():
             path.parent.mkdir(parents=True)
-            path.write_text("".join(json.dumps(v) + "\n" for v in records))
+            path.write_text("".join(json.dumps(v) + "\n" for v in records), newline="")
         return home
 
     def test_bare_invocation_groups_every_harness_with_one_schema(self):
         home = self.home_with_every_harness()
-        value, raw = self.run_cli(env={"HOME": str(home)})
+        value, raw = self.run_cli(env={"HOME": str(home), "USERPROFILE": str(home)})
         self.assertLessEqual(len(raw), 8192)
         groups = {g["harness"]: g for g in value["harnesses"]}
         self.assertEqual(list(groups), ["claude-code", "codex", "pi"])
@@ -365,11 +366,11 @@ class HistoryTests(unittest.TestCase):
             self.assertLessEqual(core, set(g["requests"][0]))
         self.assertEqual(groups["codex"]["recordings"][0]["harness_version"], "1.2")
         self.assertEqual(value["scope"]["files_scanned"], 3)
-        selected, raw = self.run_cli("select", "--role", "user", env={"HOME": str(home)})
+        selected, raw = self.run_cli("select", "--role", "user", env={"HOME": str(home), "USERPROFILE": str(home)})
         self.assertEqual(selected["matched"], 3)
         rows, _ = self.run_cli("--sql", "SELECT harness, count(*) AS n FROM rows GROUP BY harness ORDER BY harness", script=ROWS, stdin=raw)
         self.assertEqual([r["harness"] for r in rows["results"]], ["claude-code", "codex", "pi"])
-        only_codex, _ = self.run_cli("overview", "--harness", "codex", env={"HOME": str(home)})
+        only_codex, _ = self.run_cli("overview", "--harness", "codex", env={"HOME": str(home), "USERPROFILE": str(home)})
         self.assertEqual(only(only_codex)["harness"], "codex")
 
     def test_settings_override_default_locations(self):
@@ -566,12 +567,12 @@ class HistoryTests(unittest.TestCase):
             {"type": "message", "id": "m", "message": {"role": "user", "content": text}}])
         query = "SELECT text_state, length(text) AS n FROM rows"
         clipped, _ = self.run_cli("select", path, "--text", "NEEDLE", "--project", "",
-                                  "--max-text-bytes", 100, "--sql", query)
+                                  "--max-text-bytes", 300, "--sql", query)
         self.assertEqual(clipped["results"][0]["text_state"], "budget_omitted")
         self.assertLess(clipped["results"][0]["n"], len(text))
         self.assertEqual(clipped["status"], "partial")
         hydrated, _ = self.run_cli("select", path, "--text", "NEEDLE", "--project", "",
-                                   "--max-text-bytes", 100, "--full-text", "--sql", query)
+                                   "--max-text-bytes", 300, "--full-text", "--sql", query)
         self.assertEqual(hydrated["results"], [{"text_state": "full", "n": len(text)}])
         # Every matched row was re-read, so the query no longer reports omitted text.
         self.assertNotEqual(hydrated.get("status"), "partial")
@@ -655,7 +656,7 @@ class HistoryTests(unittest.TestCase):
         value, _ = self.run_cli("records", path, "--project", "", "--parse-status", "malformed_record")
         self.assertEqual(value["matched"], 1)
         self.assertEqual(value["results"][0]["parse_status"], "malformed_record")
-        self.assertEqual(value["scope"]["snapshot"][0]["file"], str(path.resolve()))
+        self.assertTrue(os.path.samefile(value["scope"]["snapshot"][0]["file"], path))
         self.assertIn("snapshot_basis", value["scope"])
         two = self.write("two.jsonl", [{"type": "session", "id": "t", "cwd": self.root}])
         value, _ = self.run_cli("overview", two, path, "--project", "")
@@ -699,7 +700,7 @@ class HistoryTests(unittest.TestCase):
     def test_coverage_floor_fits_minimum_budget(self):
         home = self.home_with_every_harness()
         value, raw = self.run_cli("overview", "--project", "/" + "p" * 3000, "--max-bytes", 1024,
-                                  env={"HOME": str(home)})
+                                  env={"HOME": str(home), "USERPROFILE": str(home)})
         self.assertLessEqual(len(raw), 1024)
         self.assertEqual(value["detail"]["level"], "coverage")
         self.assertEqual([g["harness"] for g in value["harnesses"]], ["claude-code", "codex", "pi"])

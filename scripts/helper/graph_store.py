@@ -129,15 +129,15 @@ def read_file(root, path, max_bytes, remaining):
             data = stream.read(min(max_bytes, remaining) + 1)
             after = os.fstat(stream.fileno())
         row["bytes_read"] = len(data)
-        if signature(before) != signature(after) or len(data) > min(max_bytes, remaining):
+        if len(data) > min(max_bytes, remaining):
             row["state"] = "changed_during_capture"
-        else:
-            row["digest"] = hashlib.sha256(data).hexdigest()
-            try:
-                row["text"] = data.decode("utf-8") if b"\0" not in data else None
-            except UnicodeDecodeError:
-                pass
-            row["state"] = "read" if row["text"] is not None else "binary_or_non_utf8"
+            return row, signature(after)
+        row["digest"] = hashlib.sha256(data).hexdigest()
+        try:
+            row["text"] = data.decode("utf-8") if b"\0" not in data else None
+        except UnicodeDecodeError:
+            pass
+        row["state"] = "read" if row["text"] is not None else "binary_or_non_utf8"
         return row, signature(after)
     except FileNotFoundError:
         row["state"] = "missing"
@@ -166,8 +166,17 @@ def capture(root, *, max_files=20000, max_file_bytes=1024*1024, max_total_bytes=
         except OSError:
             sig = None
         if sig != signatures[row["path"]]:
-            row.update(state="changed_during_capture", text=None, digest=None)
-            changed = True
+            # Windows may report metadata differences for a file whose bytes did not change.
+            try:
+                data = (root / row["path"]).read_bytes()
+                same = row["digest"] is not None and hashlib.sha256(data).hexdigest() == row["digest"]
+            except OSError:
+                same = False
+            if not same:
+                row.update(state="changed_during_capture", text=None, digest=None)
+                changed = True
+            else:
+                signatures[row["path"]] = sig
     coverage.update(stable=not changed, files=len(files), bytes_read=used,
                     limits={"max_files": max_files, "max_file_bytes": max_file_bytes, "max_total_bytes": max_total_bytes})
     return {"root": str(root), "files": files, "inventory": coverage,

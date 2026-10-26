@@ -50,7 +50,7 @@ class RepositoryTests(unittest.TestCase):
 
     def write(self, records, name="session.jsonl"):
         path = self.directory / name
-        path.write_text("".join(json.dumps(record) + "\n" for record in records))
+        path.write_text("".join(json.dumps(record) + "\n" for record in records), newline="")
         return path
 
     def git(self, repo, *args):
@@ -67,7 +67,7 @@ class RepositoryTests(unittest.TestCase):
         for name, text in files.items():
             path = repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
+            path.write_text(text, newline="")
         self.git(repo, "add", "-A")
         self.git(repo, "commit", "-q", "-m", message)
         return self.git(repo, "rev-parse", "HEAD")
@@ -96,7 +96,7 @@ class RepositoryTests(unittest.TestCase):
         self.commit(repo, "feat: one", **{"a.txt": "1\n"})
         code, value = self.run_select("--project", repo, "--include", "git", "--sql", "SELECT count(*) AS n FROM commits")
         self.assertEqual(code, 0, value)
-        self.assertEqual(value["scope"]["repository"]["repo"], str(repo.resolve()))
+        self.assertEqual(Path(value["scope"]["repository"]["repo"]).resolve(), repo.resolve())
         self.assertEqual(value["results"], [{"n": 1}])
         self.assertTrue(value["delivery"]["complete"])
         other = self.repo("other")
@@ -110,7 +110,7 @@ class RepositoryTests(unittest.TestCase):
         self.commit(repo, "feat: one", **{"a.txt": "1\n"})
         # An unknown view is a SQL error even when no recording directory exists, as on CI.
         settings = self.directory / "settings.json"
-        settings.write_text(json.dumps({"recordings": {"pi": [], "codex": [], "claude-code": []}}))
+        settings.write_text(json.dumps({"recordings": {"pi": [], "codex": [], "claude-code": []}}), newline="")
         code, value = self.run_select("--project", repo, "--include", "edits", "--sql", "SELECT count(*) FROM edits",
                                       env={**os.environ, "TRACE_SESSIONS_SETTINGS": str(settings)})
         self.assertEqual(code, 2)
@@ -303,10 +303,10 @@ class RepositoryTests(unittest.TestCase):
         repo = self.repo()
         self.commit(repo, "feat: files", **{"src/app.py": "import os\n\nclass A:\n    def run(self):\n        pass\n",
                                             "gone.txt": "x\n", ".gitignore": "ignored.log\n"})
-        (repo / "src/app.py").write_text("import os\nimport sys\n")
+        (repo / "src/app.py").write_text("import os\nimport sys\n", newline="")
         (repo / "gone.txt").unlink()
-        (repo / "new.md").write_text("# new\n")
-        (repo / "ignored.log").write_text("noise\n")
+        (repo / "new.md").write_text("# new\n", newline="")
+        (repo / "ignored.log").write_text("noise\n", newline="")
         path = self.write([
             claude("assistant", [{"type": "tool_use", "id": "c", "name": "Read",
                                   "input": {"file_path": str(repo / "src/app.py")}}], "a", cwd=str(repo)),

@@ -27,7 +27,7 @@ class GraphTests(unittest.TestCase):
     def write(self, path, text):
         dest = self.repo / path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(text)
+        dest.write_text(text, newline="")
         return dest
 
     def graph(self, **kwargs):

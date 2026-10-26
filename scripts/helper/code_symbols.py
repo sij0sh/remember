@@ -101,7 +101,8 @@ def _rust_definition(node, enclosing):
         trait = node.child_by_field_name("trait")
         if not target:
             return None
-        component = f"<{target} as {re.sub(r'\s+', '', _text(trait))}>" if trait is not None else target
+        traits = re.sub(r"\s+", "", _text(trait)) if trait is not None else None
+        component = f"<{target} as {traits}>" if traits is not None else target
         return "impl", target, [component]
     if node.type in RUST_KINDS:
         name = _field(node, "name")
