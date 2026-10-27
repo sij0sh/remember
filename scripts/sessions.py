@@ -6,7 +6,8 @@ import sys
 
 from helper import actions
 from helper.envelope import emit
-from helper.graph_output import render_table
+from helper.graph_output import check_fields, render_table
+from helper.projection import FIELDS
 from helper.profiles import PROFILES
 
 
@@ -32,17 +33,22 @@ COLUMNS = ("harness", "session", "kind", "role", "turn", "tool", "path", "comman
 def table(action, fields):
     """Result rows of every harness group as one table, each tagged with its harness."""
     def render(result):
-        groups = result.get("harnesses") if isinstance(result.get("harnesses"), list) else [result]
+        flat = isinstance(result.get("results"), list) or not isinstance(result.get("harnesses"), list)
+        groups = [result] if flat else result["harnesses"]
         rows = [{**({"harness": g.get("harness")} if g is not result else {}), **r}
                 for g in groups for r in (g.get("results") or []) if isinstance(r, dict)]
         present = list(dict.fromkeys(k for r in rows for k in r))
         known = [k for k in COLUMNS if k in present]
         columns = fields or (known if len(known) >= 3 else [k for k in present if k != "ref" or "cite" not in present])
         delivery = result.get("delivery") or {}
-        view = {"status": result.get("status", "ok"), "operation": action, "results": rows, "report": "transient",
+        view = {"status": "fail" if result.get("check") == "fail" else result.get("status", "ok"), "operation": action, "results": rows, "report": "transient",
                 "delivery": {"total": result.get("matched", len(rows))}, "next": result.get("next")}
         if delivery.get("complete") is False:
             view["results_truncated"] = "incomplete: " + (", ".join(delivery.get("incomplete_reasons", [])) or "unknown")
+        # Hidden tool rows are a count to act on, not an absence of matches.
+        hidden = sum(n for g in [result, *(result.get("harnesses") or [])] if isinstance(g, dict) for k, n in (g.get("excluded") or {}).items() if isinstance(n, int))
+        if hidden:
+            view["next"] = [f"{hidden} tool_call/tool_result rows hidden; add --include-tools", *(view["next"] or [])]
         return render_table(view, columns)
     return render
 
@@ -119,7 +125,7 @@ def parser():
             q.add_argument("--offset", type=int, default=0)
             q.set_defaults(project="", max_files=1)
         if action in ("context", "payload", "raw"):
-            q.add_argument("--ref", required=True, help="Returned ref as a JSON object")
+            q.add_argument("--ref", required=True, help="A row's cite token (id@line#hash) or its JSON ref object")
         if action == "context":
             q.add_argument("--mode", choices=("turn", "exchange", "nearby", "request"), default="turn")
             q.add_argument("--radius", type=int, default=3, help="Neighbors each side of the selected event (3)")
@@ -138,7 +144,7 @@ def parser():
                            help="Filter decoded, malformed, or oversized raw records")
         if action == "search":
             q.add_argument("--include-tools", action="store_true",
-                           help="Keep tool_result rows; hidden by default unless --kind or --role tool asks")
+                           help="Keep tool_call and tool_result rows; hidden by default unless --kind or --role tool asks")
             q.add_argument("--order", choices=("rank", "time"), default="rank",
                            help="rank: human requests, then assistant decisions, then the rest; time: recorded order")
             q.add_argument("--recordings", action="store_true",
@@ -207,10 +213,21 @@ def main():
         args.limit = 30
     if args.action == "context" and args.limit is None:
         args.limit = 8 if args.mode == "request" else 2 * args.radius + 1
-    fields = [f.strip() for f in args.fields.split(",") if f.strip()] if args.fields else None
+    # remember.py history calls the same column date.
+    fields = [{"date": "timestamp"}.get(f.strip(), f.strip()) for f in args.fields.split(",") if f.strip()] if args.fields else None
+    if fields:
+        args.fields = ",".join(fields)
     try:
+        if args.action in ("search", "select", "duplicates"):
+            # Event fields are projected before rows exist; --field aliases and --include columns join them.
+            include = {part.strip() for part in getattr(args, "include", "").split(",")}
+            check_fields(fields, None, [*FIELDS, "cite", *(d.partition("=")[0] for d in args.field),
+                                        *(["git"] if "git" in include else []),
+                                        *(["repo_path", "file"] if include & {"files", "symbols", "edits"} else [])])
         result = actions.run(args)
         if fields and args.action not in ("search", "select", "duplicates"):
+            check_fields(fields, [r for h in [result, *(result.get("harnesses") or [])] if isinstance(h, dict)
+                                  for r in (h.get("results") if isinstance(h.get("results"), list) else ())])
             project(result, fields)
         if args.action == "cite" and (args.offset or args.limit):
             rows = result["results"]

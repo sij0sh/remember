@@ -117,8 +117,8 @@ def load_rows(raw):
             more = value.get("detail", {}).get("more_bytes") if isinstance(value.get("detail"), dict) else None
             raise ValueError("Input envelope omitted its rows to fit --max-bytes; rerun the producer with "
                              + (f"--max-bytes {more} or more" if more else "a larger --max-bytes"))
-        if isinstance(value.get("harnesses"), list):
-            # Grouped sessions.py envelopes: one table of all harnesses' rows, each row tagged.
+        if isinstance(value.get("harnesses"), list) and not isinstance(value.get("results"), list):
+            # Grouped sessions.py envelopes (overview): one table of all harnesses' rows, each row tagged.
             rows = []
             for group in value["harnesses"]:
                 if not isinstance(group, dict):

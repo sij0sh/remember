@@ -3,6 +3,7 @@
 import argparse
 import collections
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from helper.graph_queries import Graph, TABLES, evidence, impact, query, referen
 from helper.graph_store import Store, canonical
 
 from helper.graph_reports import REPORTS, analyze, generated_files
-from helper.graph_output import compact_row, project_rows, render_table
+from helper.graph_output import check_fields, compact_row, project_rows, render_table
 from helper.whole_repo import MAX_BYTES, MAX_LINES, TEXT_BYTES, render, summary
 
 COMMANDS = {
@@ -44,8 +45,20 @@ def nonnegative(value):
     return value
 
 
+# History commands live in sessions.py; remember.py forwards them instead of failing.
+SESSION_COMMANDS = ("overview", "projects", "search", "select", "duplicates", "recurrence", "records", "edges",
+                    "context", "payload", "raw", "cite")
+SESSIONS = Path(__file__).resolve().with_name("sessions.py")
+
+
 class Parser(argparse.ArgumentParser):
     """Unknown options are reported by the chosen subcommand, with that subcommand's usage."""
+
+    def error(self, message):
+        name = message.partition("invalid choice: '")[2].partition("'")[0]
+        if name in SESSION_COMMANDS:
+            message += f"; {name} is a sessions.py command: python3 {SESSIONS} {name} ..."
+        super().error(message)
 
     def parse_args(self, args=None, namespace=None):
         args, extra = self.parse_known_args(args, namespace)
@@ -80,6 +93,9 @@ def parser():
         q = sub.add_parser(name, help=description, description=description, parents=[common])
         if name in ("map", "find"):
             q.add_argument("--kind", action="append", choices=("file", "directory", "symbol", "external", "occurrence"))
+        if name != "map":
+            # The primer belongs to map; elsewhere these flags are accepted and ignored.
+            q.add_argument("--primer", "--no-primer", dest="ignored_primer", action="store_true", help=argparse.SUPPRESS)
         if name == "map":
             q.add_argument("path", nargs="?", help="Limit rows to this file, directory or symbol's file")
             q.add_argument("--whole-repo-lines", type=nonnegative, default=MAX_LINES,
@@ -136,7 +152,7 @@ def parser():
             q.add_argument("--no-sessions", action="store_true")
             q.add_argument("--max-commits", type=positive, default=30)
             q.add_argument("--max-recordings", type=positive, default=25, help="Per-harness recording limit")
-            q.add_argument("--max-candidates", type=positive, default=1000, help="Per-harness discovery header limit")
+            q.add_argument("--max-candidates", type=positive, default=20000, help="Per-harness discovery header limit (20000, as sessions.py with a project filter)")
             q.add_argument("--max-scan-bytes", type=positive, default=64*1024*1024, help="Per-harness scan byte limit")
             q.add_argument("--max-events", type=positive, default=25000, help="Per-harness event limit")
         if name == "analyze":
@@ -436,6 +452,7 @@ def deliver(store, document, args):
     limited = incomplete(document) if limited is None else limited
     report = store.save("report", document)
     all_rows = document["results"]
+    check_fields(args.fields, all_rows)
     rows = all_rows[args.offset:args.offset+args.limit]
     if not args.verbose and not args.fields and document["operation"] != "query":
         rows = [compact_row(r) for r in rows]
@@ -494,6 +511,8 @@ def deliver(store, document, args):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in SESSION_COMMANDS:
+        os.execv(sys.executable, [sys.executable, str(SESSIONS), *sys.argv[1:]])
     p = parser()
     try:
         args = defaults(p.parse_args())

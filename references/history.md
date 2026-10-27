@@ -73,7 +73,9 @@ Git and recording coverage are independent: `not_searched`, `unavailable`,
 `partial`, or `searched` (possibly with no matches). Discovery, scan, text and edit
 mapping counters remain visible. `--max-commits`, `--max-candidates`,
 `--max-recordings`, `--max-scan-bytes` and `--max-events` bound retrieval; recording
-limits apply per harness. `--recordings PATH` narrows archive input. Paging or byte
+limits apply per harness; compact `coverage.scan_incomplete` names the limit each
+harness hit. Compact rows drop mention-only acknowledgements and slash-command
+echoes; `--verbose` keeps them. `--recordings PATH` narrows archive input. Paging or byte
 clipping is transient: repeat the same options with the returned offset, knowing
 live history may have changed. Increase `--max-bytes` if metadata or a row cannot fit.
 No transcript text is saved in source reports or imported into a memory store.
@@ -95,12 +97,12 @@ the previous CLI. They read recordings and Git, not the retained graph cache.
 | Action | Result |
 |---|---|
 | `overview` (default), `projects` | Bounded recording overview and recorded project roots. |
-| `search --text TEXT` | Matching event previews; repeated text terms are OR. Ranked: human requests, assistant decisions, rest (`--order time`). `tool_result` hidden unless `--include-tools`, `--kind` or `--role tool`. |
+| `search --text TEXT` | Matching event previews in one top-level `results` list, each row with `harness` and `cite`; `harnesses[]` holds per-harness coverage only; repeated text terms are OR. Ranked: human requests, assistant decisions, rest (`--order time`). `tool_call`/`tool_result` hidden (counted in `excluded`) unless `--include-tools`, `--kind` or `--role tool`. |
 | `search --path PREFIX` | Recorded file activity, distinct from text mentions. |
 | `select` | Filtered rows; `--sql` aggregates before output paging. |
-| `context --ref JSON` | Original turn, exchange, request or nearby records. Selected event whole (`selected: true`); +/- `--radius` neighbors as previews. |
+| `context --ref CITE\|JSON` | Original turn, exchange, request or nearby records. Selected event whole (`selected: true`); +/- `--radius` neighbors as previews. |
 | `edges` | Recorded session parent/call/result links, not repository dependencies. |
-| `payload --ref JSON`, `raw --ref JSON` | Expanded payload or native record content. |
+| `payload --ref CITE\|JSON`, `raw --ref CITE\|JSON` | Expanded payload or native record content. |
 | `records` | Native records, including unsupported/malformed-record gaps. |
 | `recurrence` | Failed results grouped across independent sessions; tool/environment failures hidden unless `--include-noise`. |
 | `duplicates` | Repeated normalized source windows; no recordings read. |
@@ -109,11 +111,12 @@ the previous CLI. They read recordings and Git, not the retained graph cache.
 ```bash
 python3 "$S/sessions.py" search --text 'retry policy'
 python3 "$S/sessions.py" search --human --text 'transaction'
-python3 "$S/sessions.py" context --ref '{"file":"...","offset":0,"sha256":"..."}' --mode exchange
+python3 "$S/sessions.py" context --ref 'SESSION@LINE#HASH' --mode exchange
 python3 "$S/sessions.py" select --include git --sql 'SELECT sha, subject FROM commits LIMIT 10'
 ```
 
-Copy actual returned refs; the JSON above only illustrates argument quoting.
+Copy a returned `cite` token, or the JSON `ref` for recordings outside the configured
+roots (tokens resolve only there). A bare session id is refused.
 `next[].argv` is quoted for the current platform (POSIX shell or Windows argv).
 Windows PowerShell 5.1 strips `"` from native arguments: use PowerShell 7+ or
 escape them as `\"`.

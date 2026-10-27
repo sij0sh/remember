@@ -31,6 +31,11 @@ def token(ref):
     return f"{recording_id(ref['file'])}@{ref['line']}{f'.{item}' if item else ''}#{ref['sha256'][:12]}"
 
 
+def tagged(row, ref):
+    """row plus its cite token; a ref without a line number (a mid-file oversized record) has none."""
+    return {**row, "cite": token(ref)} if ref.get("line") is not None and ref.get("sha256") else row
+
+
 @lru_cache(maxsize=None)
 def _recording(rid):
     found = []

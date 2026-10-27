@@ -59,6 +59,12 @@ class GraphTests(unittest.TestCase):
         self.assertEqual({r["path"] for r in consumers}, {"api.py", "service.py"})
         self.assertTrue(limits["complete_within_predicates"])
 
+    def test_unknown_fields_fail_instead_of_blank_columns(self):
+        self.fixture()
+        error = self.cli("query", "--sql", "SELECT path FROM files", "--fields", "path,bogus", success=False)
+        self.assertIn("no column bogus", error["error"])
+        self.assertTrue(all(set(r) <= {"path"} for r in self.cli("query", "--sql", "SELECT path, 1 AS n FROM files", "--fields", "path")["results"]))
+
     def test_witnesses_expand_to_retained_source(self):
         self.fixture()
         graph = self.graph()

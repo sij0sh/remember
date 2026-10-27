@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import os
 import shlex
 import subprocess
@@ -92,7 +93,7 @@ class HistoryTests(unittest.TestCase):
         requests = only(value)["requests"]
         self.assertEqual({e["text"] for e in requests}, {"Fix importer and verify it", "Please preserve offline operation"})
         search, _ = self.run_cli("search", path, "--kind", "tool_call")
-        call = only(search)["results"][0]
+        call = search["results"][0]
         self.assertEqual(call["exit_code"], 1)
         exchange, _ = self.run_cli("context", "--ref", json.dumps(call["ref"]), "--mode", "exchange")
         self.assertEqual([e["kind"] for e in exchange["results"]], ["tool_call", "tool_result"])
@@ -106,8 +107,8 @@ class HistoryTests(unittest.TestCase):
         value, _ = self.run_cli("overview", path)
         self.assertEqual(only(value)["activity"]["request_count"], 1)
         calls, _ = self.run_cli("search", path, "--path", "reader.py", "--kind", "tool_call")
-        self.assertEqual(only(calls)["results"][0]["outcome"], "succeeded")
-        self.assertEqual(only(calls)["results"][0]["session"], "s")
+        self.assertEqual(calls["results"][0]["outcome"], "succeeded")
+        self.assertEqual(calls["results"][0]["session"], "s")
 
     def test_codex_completed_and_fallback(self):
         path = self.write("codex.jsonl", [
@@ -145,9 +146,9 @@ class HistoryTests(unittest.TestCase):
             completed("u2", "commit and push"), response("commit and push"), answer("pushed again")])
         value, _ = self.run_cli("select", path, "--kind", "user_message", "--fields", "text,ref")
         group = only(value)
-        self.assertEqual(len(group["results"]), 2)
+        self.assertEqual(len(value["results"]), 2)
         self.assertEqual(group["scope"]["duplicates_skipped"], 2)
-        self.assertEqual({r["ref"]["line"] for r in group["results"]}, {3, 5})
+        self.assertEqual({r["ref"]["line"] for r in value["results"]}, {3, 5})
 
     def test_pi_parallel_results_chain_to_their_calls(self):
         calls = [{"type": "toolCall", "id": f"c{i}", "name": "bash", "arguments": {"command": f"step {i}"}}
@@ -164,9 +165,9 @@ class HistoryTests(unittest.TestCase):
             {"type": "message", "id": "r3", "parentId": "u", "message": {"role": "toolResult", "toolCallId": "c3", "content": []}}])
         value, _ = self.run_cli("select", path, "--kind", "tool_call", "--fields", "command,outcome,result_ref")
         group = only(value)
-        paired = {r["command"]: r.get("result_ref") is not None for r in group["results"]}
+        paired = {r["command"]: r.get("result_ref") is not None for r in value["results"]}
         self.assertEqual(paired, {"step 0": True, "step 1": True, "step 2": True, "late": False})
-        self.assertEqual(group["results"][2]["outcome"], "failed")
+        self.assertEqual(value["results"][2]["outcome"], "failed")
         self.assertEqual(group["scope"]["unpaired_results"], 1)
         self.assertEqual(group["scope"]["calls_without_result"], 1)
 
@@ -176,9 +177,9 @@ class HistoryTests(unittest.TestCase):
             pi("assistant", "earlier topic note", "a0"), pi("user", "please fix topic", "u1", "a0"),
             pi("assistant", "topic fixed", "a1", "u1")])
         ranked, _ = self.run_cli("search", path, "--text", "topic")
-        self.assertEqual(only(ranked)["results"][0]["text"], "please fix topic")
+        self.assertEqual(ranked["results"][0]["text"], "please fix topic")
         timed, _ = self.run_cli("search", path, "--text", "topic", "--order", "time")
-        self.assertEqual(only(timed)["results"][0]["text"], "earlier topic note")
+        self.assertEqual(timed["results"][0]["text"], "earlier topic note")
 
     def test_context_returns_selected_text_whole(self):
         long = "decision " + "z" * 6000 + " END"
@@ -189,7 +190,7 @@ class HistoryTests(unittest.TestCase):
             parent = f"a{i}"
         path = self.write("long.jsonl", records)
         found, _ = self.run_cli("search", path, "--text", "decision")
-        value, raw = self.run_cli("context", "--ref", json.dumps(only(found)["results"][0]["ref"]))
+        value, raw = self.run_cli("context", "--ref", json.dumps(found["results"][0]["ref"]))
         self.assertLessEqual(len(raw), 8192)
         selected = [r for r in value["results"] if r.get("selected")]
         self.assertEqual(len(selected), 1)
@@ -206,7 +207,7 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("harness", out.stdout.splitlines()[1])
         self.assertIn("make a table", out.stdout)
         found, _ = self.run_cli("search", path, "--text", "table")
-        ctx, _ = self.run_cli("context", "--ref", json.dumps(only(found)["results"][0]["ref"]), "--fields", "kind,text")
+        ctx, _ = self.run_cli("context", "--ref", json.dumps(found["results"][0]["ref"]), "--fields", "kind,text")
         self.assertTrue(all(set(r) <= {"kind", "text", "selected"} for r in ctx["results"]))
         bad = subprocess.run([sys.executable, str(SESSIONS), "search", "--bogus"], text=True, capture_output=True, timeout=30)
         self.assertEqual(bad.returncode, 2)
@@ -219,7 +220,7 @@ class HistoryTests(unittest.TestCase):
             pi("user", "branch two", "u2", "a1"), pi("assistant", "second", "a2", "u2"),
             pi("assistant", "continued branch one", "a3", "a1")])
         value, _ = self.run_cli("search", path, "--text", "continued")
-        context, _ = self.run_cli("context", "--ref", json.dumps(only(value)["results"][0]["ref"]))
+        context, _ = self.run_cli("context", "--ref", json.dumps(value["results"][0]["ref"]))
         texts = [e["text"] for e in context["results"]]
         self.assertIn("branch one", texts)
         self.assertNotIn("branch two", texts)
@@ -229,15 +230,27 @@ class HistoryTests(unittest.TestCase):
         path = self.write("large.jsonl", [{"type": "session", "id": "s", "cwd": self.root},
             {"type": "message", "id": "r", "message": {"role": "toolResult", "toolCallId": "missing", "content": [{"type": "text", "text": text}], "isError": True}}])
         hidden, _ = self.run_cli("search", path, "--text", "ERROR_MIDDLE")
-        self.assertEqual(only(hidden)["results"], [])
+        self.assertEqual(hidden["results"], [])
         self.assertEqual(only(hidden)["excluded"]["tool_result"], 1)
         value, raw = self.run_cli("search", path, "--text", "ERROR_MIDDLE", "--include-tools")
         self.assertLessEqual(len(raw), 8192)
-        e = only(value)["results"][0]
+        e = value["results"][0]
         self.assertIn("ERROR_MIDDLE", e["text"])
         self.assertGreater(e["text_omitted"], 100000)
         value, _ = self.run_cli("payload", "--ref", json.dumps(e["ref"]), "--pointer", e["payload_pointer"], "--tail", "--chars", 40)
         self.assertIn("final result", value["results"][0]["text"])
+
+    def test_search_hides_tool_calls_and_remember_forwards_history_commands(self):
+        path = self.write("calls.jsonl", [{"type": "session", "id": "s", "cwd": self.root},
+            pi("user", "rename CALL_NEEDLE", "u"),
+            pi("assistant", [{"type": "toolCall", "id": "c", "name": "write",
+                              "arguments": {"path": "a.py", "content": "CALL_NEEDLE = 1"}}], "a", "u")])
+        value, _ = self.run_cli("search", path, "--text", "CALL_NEEDLE", "--fields", "date,kind")
+        self.assertEqual([r["kind"] for r in value["results"]], ["user_message"])
+        self.assertIn("timestamp", value["results"][0])
+        self.assertEqual(only(value)["excluded"]["tool_call"], 1)
+        forwarded, _ = self.run_cli("search", path, "--text", "CALL_NEEDLE", script=SESSIONS.with_name("remember.py"))
+        self.assertEqual(forwarded["results"], self.run_cli("search", path, "--text", "CALL_NEEDLE")[0]["results"])
 
     def test_oversized_and_malformed_records_are_visible(self):
         path = self.write("oversized.jsonl", [{"type": "session", "id": "s", "cwd": self.root}, {"blob": "a" * 5000 + "NEEDLE"}])
@@ -246,14 +259,14 @@ class HistoryTests(unittest.TestCase):
         value, _ = self.run_cli("search", path, "--kind", "gap", "--max-record-bytes", 1000)
         self.assertEqual(value["scope"]["oversized_records"], 1)
         self.assertEqual(value["scope"]["malformed_records"], 1)
-        ref = only(value)["results"][0]["ref"]
+        ref = value["results"][0]["ref"]
         raw, _ = self.run_cli("raw", "--ref", json.dumps(ref), "--find", "NEEDLE", "--chars", 40)
         self.assertIn("NEEDLE", raw["results"][0]["text"])
 
     def test_append_allowed_changed_record_rejected(self):
         path = self.fixture()
         value, _ = self.run_cli("search", path, "--role", "user")
-        e = only(value)["results"][0]
+        e = value["results"][0]
         with path.open("a") as f:
             f.write(json.dumps(pi("assistant", "later", "a3", "a2")) + "\n")
         self.run_cli("payload", "--ref", json.dumps(e["ref"]), "--pointer", e["payload_pointer"])
@@ -302,7 +315,7 @@ class HistoryTests(unittest.TestCase):
             parent = f"a{i}"
         path = self.write("long.jsonl", records)
         found, _ = self.run_cli("search", path, "--text", "step 15")
-        ref = json.dumps(only(found)["results"][0]["ref"])
+        ref = json.dumps(found["results"][0]["ref"])
         value, _ = self.run_cli("context", "--ref", ref, "--limit", 5)
         self.assertTrue(value["selected"]["on_page"])
         self.assertEqual(value["selected"]["position"], 16)
@@ -358,7 +371,7 @@ class HistoryTests(unittest.TestCase):
         path = self.write("elsewhere.jsonl", [{"type": "session", "id": "s", "cwd": "/elsewhere"},
                                               pi("user", "remote request", "u1")])
         found, _ = self.run_cli("search", path, "--text", "remote", "--project", "")
-        context, _ = self.run_cli("context", "--ref", json.dumps(only(found)["results"][0]["ref"]))
+        context, _ = self.run_cli("context", "--ref", json.dumps(found["results"][0]["ref"]))
         self.assertEqual([e["text"] for e in context["results"]], ["remote request"])
 
     def test_bare_invocation_uses_local_recordings(self):
@@ -441,7 +454,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "message", "id": "r", "parentId": "b", "message": {"role": "toolResult", "toolCallId": "same", "isError": False, "content": []}}])
         value, _ = self.run_cli("search", path, "--kind", "tool_call")
         self.assertEqual(value["scope"]["ambiguous_call_ids"], 1)
-        self.assertTrue(all("result_ref" not in e for e in only(value)["results"]))
+        self.assertTrue(all("result_ref" not in e for e in value["results"]))
 
     def test_rows_aggregation_coverage_and_readonly(self):
         selected, raw = self.run_cli("select", self.fixture(), "--kind", "tool_call")
@@ -461,7 +474,7 @@ class HistoryTests(unittest.TestCase):
         path = self.fixture()
         calls, _ = self.run_cli("select", path, "--kind", "tool_call", "--fields", "tool,result_ref,ref", "--field", "alias=/message/role")
         results, _ = self.run_cli("select", path, "--kind", "tool_result", "--fields", "text,ref")
-        self.assertEqual(only(calls)["results"][0]["alias"], "assistant")
+        self.assertEqual(calls["results"][0]["alias"], "assistant")
         left, right = self.directory / "calls.json", self.directory / "results.json"
         left.write_text(json.dumps(calls)); right.write_text(json.dumps(results))
         value, _ = self.run_cli("--input", left, "--input", right, "--sql", "SELECT t0.tool,t1.text FROM t0 JOIN t1 ON json_extract(t0.result_ref,'$.offset')=json_extract(t1.ref,'$.offset')", script=ROWS)
@@ -656,7 +669,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "context_edit", "targetId": "u1", "replacement": "REPLACED ONE"},
             {"type": "message", "id": "u2", "parentId": "a1", "message": {"role": "user", "content": "two"}}])
         found, _ = self.run_cli("search", path, "--text", "two", "--fields", "ref", "--project", "")
-        ref = only(found)["results"][0]["ref"]
+        ref = found["results"][0]["ref"]
         value, _ = self.run_cli("context", "--mode", "request", "--ref", json.dumps(ref))
         self.assertEqual(value["guarantee"], "replayed")
         self.assertEqual([row["block_type"] for row in value["context_items"]],
@@ -673,12 +686,12 @@ class HistoryTests(unittest.TestCase):
             {"type": "compacted", "summary": "CODEX SUMMARY", "firstKeptEntryId": "u1"},
             {"type": "event_msg", "payload": {"type": "item_completed", "item": {"id": "u2", "type": "UserMessage", "parent_id": "a1", "content": [{"type": "text", "text": "two"}]}}}])
         found, _ = self.run_cli("search", path, "--text", "two", "--fields", "ref", "--project", "")
-        ref = only(found)["results"][0]["ref"]
+        ref = found["results"][0]["ref"]
         value, _ = self.run_cli("context", "--mode", "request", "--ref", json.dumps(ref))
         self.assertIn(value["guarantee"], {"replayed", "transcript_only"})
         self.assertEqual(value["context_items"][0]["block_type"], "summary")
         other, _ = self.run_cli("search", path, "--text", "one", "--fields", "ref", "--project", "")
-        ref2 = only(other)["results"][0]["ref"]
+        ref2 = other["results"][0]["ref"]
         compared, _ = self.run_cli("context", "--mode", "request", "--ref", json.dumps(ref),
                                    "--compare-ref", json.dumps(ref2))
         self.assertTrue(compared["changed"])
@@ -690,7 +703,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "assistant", "uuid": "a", "parentUuid": "u", "message": {"content": [{"type": "text", "text": "answer"}]}},
             {"type": "user", "uuid": "u2", "parentUuid": "a", "message": {"content": "two"}}])
         found, _ = self.run_cli("search", path, "--text", "two", "--fields", "ref")
-        ref = only(found)["results"][0]["ref"]
+        ref = found["results"][0]["ref"]
         value, _ = self.run_cli("context", "--mode", "request", "--ref", json.dumps(ref))
         self.assertEqual(value["guarantee"], "transcript_only")
         self.assertEqual(value["context_items"][-1]["block_type"], "user_message")
@@ -767,7 +780,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "context_edit", "targetId": "u", "replacement": "REPLACED"},
             {"type": "custom_message", "content": "INJECTED SUMMARY"}])
         value, _ = self.run_cli("select", path, "--project", "", "--fields", "kind,origin,state,text_state,text", "--limit", 50)
-        rows = only(value)["results"]
+        rows = value["results"]
         self.assertEqual({r["kind"] for r in rows}, {"config", "summary", "user_message", "reasoning", "assistant_message", "instruction", "context_change"})
         self.assertIn("SUMMARY TEXT", {r.get("text") for r in rows})
         self.assertIn("SYSTEM INSTRUCTION", {r.get("text") for r in rows})
@@ -787,7 +800,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "event_msg", "payload": {"type": "token_count", "info": {"total": 3}}},
             {"type": "response_item", "payload": {"type": "additional_tools", "tools": [{"name": "x"}]}}])
         value, _ = self.run_cli("select", path, "--project", "", "--fields", "kind,origin,state,text_state,text", "--limit", 50)
-        rows = only(value)["results"]
+        rows = value["results"]
         kinds = {r["kind"] for r in rows}
         self.assertTrue({"instruction", "reasoning", "lifecycle", "usage", "capability", "config"} <= kinds)
         self.assertIn("BASE INSTRUCTION", {r.get("text") for r in rows})
@@ -806,7 +819,7 @@ class HistoryTests(unittest.TestCase):
             {"type": "attachment", "content": "ATTACHMENT TEXT"},
             {"type": "api-request", "request": {"messages": []}}])
         value, _ = self.run_cli("select", path, "--project", "", "--fields", "kind,origin,state,text_state,text", "--limit", 50)
-        rows = only(value)["results"]
+        rows = value["results"]
         kinds = {r["kind"] for r in rows}
         self.assertTrue({"summary", "instruction", "reasoning", "attachment", "config"} <= kinds)
         self.assertIn("CLAUDE SUMMARY", {r.get("text") for r in rows})
@@ -864,7 +877,7 @@ class PhaseOneTests(HistoryTests):
             {"type": "session", "id": "s", "cwd": self.root},
             {"type": "message", "id": "m", "message": {"role": "user", "content": text}}])
         value, _ = self.run_cli("search", path, "--text", "NEEDLE", "--project", "")
-        row = only(value)["results"][0]
+        row = value["results"][0]
         self.assertIn("NEEDLE", row["text"])
         self.assertGreater(row["text_omitted"], 9000)
         self.assertEqual(row["text_chars"], len(text))
@@ -882,7 +895,7 @@ class PhaseOneTests(HistoryTests):
         self.assertEqual(value["status"], "partial")
         self.assertGreater(value["omissions"]["text_truncated_events"], 0)
         search, _ = self.run_cli("search", path, "--text", "NEEDLE", "--project", "", "--max-text-bytes", 100)
-        self.assertEqual(only(search)["results"][0]["text_state"], "budget_omitted")
+        self.assertEqual(search["results"][0]["text_state"], "budget_omitted")
 
     def test_records_finds_profile_ignored_record_and_payload_expands(self):
         path = self.write("ignored.jsonl", [
@@ -915,7 +928,32 @@ class PhaseOneTests(HistoryTests):
     def test_search_accepts_fields_projection(self):
         path = self.fixture()
         value, _ = self.run_cli("search", path, "--kind", "user_message", "--fields", "text")
-        self.assertEqual(set(only(value)["results"][0]), {"text", "harness", "ref"})
+        self.assertEqual(set(value["results"][0]), {"text", "harness", "ref", "cite"})
+
+    def test_unknown_fields_fail_instead_of_blank_columns(self):
+        path = self.fixture()
+        for action in ("search", "select"):
+            error, _ = self.run_cli(action, path, "--fields", "text,request", code=2)
+            message = error["results"][0]["error"]
+            self.assertIn("no column request", message)
+            self.assertIn("available: session", message)
+        found, _ = self.run_cli("search", path, "--kind", "user_message")
+        error, _ = self.run_cli("context", "--ref", json.dumps(found["results"][0]["ref"]), "--fields", "kind,summary",
+                                code=2)
+        self.assertIn("no column summary", error["results"][0]["error"])
+        aliased, _ = self.run_cli("search", path, "--fields", "text,first", "--field", "first=/type")
+        self.assertIn("first", aliased["results"][0])
+
+    def test_search_rows_are_one_list_with_cite_tokens(self):
+        path = self.fixture()
+        value, _ = self.run_cli("search", path, "--kind", "user_message")
+        self.assertTrue(value["results"])
+        self.assertTrue(all(r["harness"] == "pi" and re.fullmatch(r"pi@\d+(\.\d+)?#[0-9a-f]{12}", r["cite"])
+                            for r in value["results"]))
+        # Groups keep coverage only; rows are never split across harnesses[].results.
+        self.assertTrue(all("results" not in g for g in value["harnesses"]))
+        again, _ = self.run_cli("context", "--ref", json.dumps(value["results"][0]["ref"]))
+        self.assertEqual(next(r for r in again["results"] if r.get("selected"))["cite"], value["results"][0]["cite"])
 
     def emitted(self, result, budget):
         from helper.envelope import emit
@@ -991,7 +1029,7 @@ class PhaseOneTests(HistoryTests):
         direct, _ = self.run_cli("select", path, "--sql", "SELECT kind FROM rows LIMIT 40")
         self.assertFalse(direct["omissions"]["more_query_rows"])
         paged, _ = self.run_cli("select", path, "--kind", "user_message")
-        self.assertEqual(len(only(paged)["results"]), 2)
+        self.assertEqual(len(paged["results"]), 2)
 
     def test_query_limited_producer_and_unknown_coverage(self):
         path = self.fixture()
@@ -1068,7 +1106,7 @@ class CoverageRecoveryTests(unittest.TestCase):
         self.assertEqual(rows["results"], [{"lineages": 1, "naive": 2}])
         shown, _ = self.run_cli("search", parent, self.directory / "pi-child.jsonl", "--kind", "user_message",
                                 "--fields", "session,independent_session,text")
-        self.assertEqual({r["text"]: r["independent_session"] for r in only(shown)["results"]},
+        self.assertEqual({r["text"]: r["independent_session"] for r in shown["results"]},
                          {"start": "p", "workflow step": "p"})
 
     def failing_session(self, name, sid, output, parent=None, command="pnpm setup"):
@@ -1161,12 +1199,12 @@ class CoverageRecoveryTests(unittest.TestCase):
         path = self.fixture()
         env = self.settings_for(self.directory)
         search, _ = self.run_cli("search", path, "--kind", "tool_call")
-        call = only(search)["results"][0]
-        # Search rows are locators: no token until the evidence is expanded.
-        self.assertNotIn("cite", call)
+        call = search["results"][0]
         exchange, _ = self.run_cli("context", "--ref", json.dumps(call["ref"]), "--mode", "exchange")
         token = exchange["cite"]
         self.assertRegex(token, r"^pi@3(\.\d+)?#[0-9a-f]{12}$")
+        # A search row carries the same token its expansion does, so it feeds --ref directly.
+        self.assertEqual(call["cite"], token)
         self.assertEqual([r["cite"] for r in exchange["results"]][0], token)
         again, _ = self.run_cli("context", "--ref", token, "--mode", "exchange", env=env)
         self.assertEqual([e["kind"] for e in again["results"]], ["tool_call", "tool_result"])
@@ -1184,7 +1222,7 @@ class CoverageRecoveryTests(unittest.TestCase):
         path = self.fixture()
         env = self.settings_for(self.directory)
         search, _ = self.run_cli("search", path, "--human", "--limit", 1)
-        turn, _ = self.run_cli("context", "--ref", json.dumps(only(search)["results"][0]["ref"]))
+        turn, _ = self.run_cli("context", "--ref", json.dumps(search["results"][0]["ref"]))
         report = self.directory / "report.md"
         report.write_text(f"Asked for it ({turn['cite']}).\n"
                           f"Session 0a1b2c3d said so; digest {'ab12' * 16} is data.\n")

@@ -183,7 +183,7 @@ raise it. `results_truncated` reports delivery or query retention clipping;
 raise `--max-bytes` when bytes, rather than row count, are the bottleneck.
 `--format table` prints selected columns plus status, gaps and continuations.
 `--fields path,line,via` projects delivered rows in either format, without
-changing retained evidence. `show REPORT` can recover the full columns.
+changing retained evidence; a name no row carries exits 2 and lists available columns. `show REPORT` can recover the full columns.
 
 Exit 0 means the operation completed, including explicitly partial evidence.
 `status: partial` means incomplete: inventory, capture, traversal or mention gaps, a

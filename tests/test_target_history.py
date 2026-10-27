@@ -89,6 +89,27 @@ class TargetHistoryTests(unittest.TestCase):
         self.assertTrue(any("exchange" in n["argv"] for n in lead["next"]))
         self.assertEqual(out["coverage"]["git"][0]["state"], "unavailable")
 
+    def test_unknown_fields_fail_instead_of_blank_columns(self):
+        self.recording()
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/remember.py"), "history", "a.py::target",
+                                 "--recordings", str(self.archive), "--fields", "date,summary",
+                                 "--repo", str(self.repo), "--cache", str(self.cache)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("no column summary", json.loads(result.stdout)["error"])
+        self.assertIn("date", self.cli("history", "a.py::target", "--recordings", str(self.archive),
+                                       "--fields", "date,text")["results"][0])
+
+    def test_compact_rows_drop_trivial_mentions_and_accept_timestamp(self):
+        mention = {"type": "message", "id": "m", "parentId": "u", "message": {"role": "assistant",
+                   "content": "a.py target looks fine"}}
+        self.recording(sid="ack", path="unrelated.py", content="x=1\n", request="yes", extra=[mention])
+        self.recording(sid="real", path="unrelated.py", content="x=1\n", request="Keep a.py target eager", extra=[mention])
+        argv = ("history", "a.py::target", "--recordings", str(self.archive), "--fields", "timestamp,text")
+        rows = self.cli(*argv)["results"]
+        self.assertEqual([r["text"] for r in rows], ["Keep a.py target eager"])
+        self.assertIn("date", rows[0])
+        self.assertIn("ack", {r["evidence"]["session"] for r in self.history("a.py::target")["results"]})
+
     def test_renames_exact_paths_and_independent_git_lane(self):
         self.init()
         self.git("mv", "a.py", "renamed.py")

@@ -16,7 +16,7 @@ from .actions import lineages
 from .discovery import candidate_files, normalized_root
 from .enrichment import parse_root_map, remap
 from .git_resolve import GitResolver
-from .options import DiscoveryOptions, ScanOptions, command_line
+from .options import TEXT_BYTES_AUTO_CAP, TEXT_BYTES_DEFAULT, DiscoveryOptions, ScanOptions, command_line
 from .projection import clean, human, next_for
 from .reader import scan_file
 from .records import RecordCache
@@ -220,12 +220,16 @@ def scan(args, root):
     groups = candidate_files(options, scope)
     recordings, coverage = [], []
     for harness, files, counters in groups:
+        # Like sessions.py: store full text for the bytes this group will scan, so a target mention is not cut off.
+        size = sum(os.path.getsize(f) for f in files if os.path.exists(f))
+        text = max(TEXT_BYTES_DEFAULT, min(size, args.max_scan_bytes, TEXT_BYTES_AUTO_CAP))
         for file in files:
             if counters["bytes_scanned"] >= args.max_scan_bytes or counters.get("event_limit_reached"):
                 counters["scan_complete"] = False
+                counters["byte_limit_reached"] = counters["bytes_scanned"] >= args.max_scan_bytes
                 break
             recordings.append(scan_file(file, ScanOptions(harness=harness, max_scan_bytes=args.max_scan_bytes,
-                                                          max_events=args.max_events), counters))
+                                                          max_events=args.max_events, max_text_bytes=text), counters))
             counters["files_scanned"] += 1
         coverage.append({"harness": harness, **counters})
     keys = lineages(recordings)
@@ -454,10 +458,17 @@ def compact(rows):
             item["followup"] = found["followup"]["text"][:120]
     for item in turns.values():
         counts = item.pop("counts")
+        item["mention_only"] = set(counts) == {"mention"}
         item["activity"] = ", ".join(f"{n} {op}" for op, n in sorted(counts.items(), key=lambda c: -c[1]))
         if not item["signals"]:
             del item["signals"]
-    return out
+    # A bare acknowledgement or slash-command echo that only mentions the target locates nothing; --verbose keeps it.
+    return [item for item in out if not (item.pop("mention_only", False) and trivial(item.get("text", "")))]
+
+
+def trivial(text):
+    text = text.strip()
+    return len(text) < 12 or text.startswith("<command-")
 
 
 def summary(coverage):
@@ -476,7 +487,16 @@ def summary(coverage):
     for key in ("reason", "independent_sessions", "current_session_exclusion"):
         if key in sessions:
             out["sessions_" + key if key == "reason" else key] = sessions[key]
-    incomplete = [g["harness"] for g in sessions.get("groups", []) if not g.get("scan_complete") or not g.get("text_complete")]
+    # Name the limit that left each harness incomplete, so `partial` says what to raise.
+    incomplete = {}
+    for g in sessions.get("groups", []):
+        if g.get("scan_complete") and g.get("text_complete"):
+            continue
+        reasons = [f"{g['files_omitted_limit']} older recordings over --max-recordings" if g.get("files_omitted_limit") else "",
+                   "--max-scan-bytes" if g.get("byte_limit_reached") else "",
+                   "--max-events" if g.get("event_limit_reached") else "",
+                   "text budget" if not g.get("text_complete") else ""]
+        incomplete[g["harness"]] = "; ".join(r for r in reasons if r) or "discovery limit; raise --max-candidates"
     if incomplete:
         out["scan_incomplete"] = incomplete
     if sessions.get("discovery_complete") is False:
@@ -488,7 +508,7 @@ def summary(coverage):
 def deliver(document, args):
     """Bound output without persisting transcript text in graph reports."""
     from .graph_store import canonical
-    from .graph_output import project_rows, render_table
+    from .graph_output import check_fields, project_rows, render_table
     verbose = getattr(args, "verbose", False)
     coverage = document.get("coverage", {})
     partial = any(c.get("state") in ("partial", "unavailable") for c in coverage.get("git", []))
@@ -502,6 +522,10 @@ def deliver(document, args):
         document["expand"] = {"session": command_line([sys.executable, str(SESSIONS), "context", "--ref", "REF",
                                                        "--mode", "exchange"]),
                               "git": command_line(["git", "-C", document["scope"]["repo"], "show", "ID"])}
+    if getattr(args, "fields", None):
+        # sessions.py calls the same column timestamp.
+        args.fields = ["date" if f == "timestamp" else f for f in args.fields]
+    check_fields(getattr(args, "fields", None), rows)
     fields = getattr(args, "fields", None) or (COMPACT_FIELDS if not verbose and getattr(args, "format", None) == "table" else None)
     total = len(rows)
     document["results"] = project_rows(rows[args.offset:args.offset + args.limit], getattr(args, "fields", None))
