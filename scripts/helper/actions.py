@@ -228,7 +228,9 @@ def context(groups, ref, args, scope):
            "relationship_basis": basis, "matched": len(found), "cite": cite.token(target["ref"]),
            "selected": {"position": position, "on_page": on_page},
            "page": {"start": start, "end": start + len(rows)},
-           "results": [{**clean(e, args), "cite": cite.token(e["ref"])} for e in rows],
+           # The selected event is what the caller asked to read: full text; neighbors are previews.
+           "results": [{**clean(e, None), "selected": True, "cite": cite.token(e["ref"])} if e is target
+                       else {**clean(e, args), "cite": cite.token(e["ref"])} for e in rows],
            "omissions": {"selection": max(0, len(found) - len(rows))},
            "next": next_for(target)}
     if start + len(rows) < len(found) and not args.tail:
@@ -362,7 +364,8 @@ def describe():
     return {"results": [{"fields": list(FIELDS),
         "grain": "one normalized occurrence; tool_call and tool_result are separate rows",
         "schema": "every harness emits the same fields; a field a harness did not record is absent",
-        "grouping": "overview/search/select return harnesses[]: one group per harness with an identical shape",
+        "grouping": "search/select rows are one top-level results[], each tagged with harness and a cite token; "
+                    "harnesses[] keeps per-harness scope, omissions and leads; overview requests stay per harness",
         "overview": ["compare harness groups, not raw counts across harness guarantees",
                      "requests are sampled user messages, not a task inventory; rows keep orientation fields only",
                      "ignored summaries/system/thinking and shell side effects are not reconstructed",
@@ -459,8 +462,24 @@ def combined_scope(scope, groups):
     return scope
 
 
+TOOL_KINDS = ("tool_call", "tool_result")
+
+
+def rank(e):
+    """Human requests, then assistant decisions and reasoning, then tool and system activity."""
+    return 0 if human(e) else 1 if e["kind"] in ("assistant_message", "reasoning") else 2
+
+
 def search(recordings, args, repository=None):
     matches = [e for g in recordings for e in g["events"] if accepted(e, args)]
+    # Tool payloads echo files and logs: they bury the requests and decisions that explain them.
+    tools = args.action == "search" and not (args.kind or args.role == "tool" or args.include_tools)
+    hidden = {k: sum(e["kind"] == k for e in matches) for k in TOOL_KINDS} if tools else {}
+    hidden = {k: n for k, n in hidden.items() if n}
+    if hidden:
+        matches = [e for e in matches if e["kind"] not in hidden]
+    if getattr(args, "order", "time") == "rank":
+        matches.sort(key=rank)
     rows = matches[args.offset:args.offset + args.limit]
     cache = RecordCache(args.max_record_bytes)
     if getattr(args, "fields", None):
@@ -469,9 +488,13 @@ def search(recordings, args, repository=None):
         out = [clean(e, args) for e in rows]
     if repository is not None:
         out = [repository.enrich(e, row) for e, row in zip(rows, out)]
+    # Every row is citable and expandable as is; _order interleaves harness groups by rank tier.
+    ranked = getattr(args, "order", "time") == "rank"
+    out = [{**cite.tagged(row, e["ref"]), "_order": rank(e) if ranked else 0} for e, row in zip(rows, out)]
     gaps = [e for g in recordings for e in g["events"] if e["kind"] in ("gap", "unknown")]
     return {"matched": len(matches), "results": out,
-            "leads": [clean(e, args) for e in gaps[:3]],
+            **({"excluded": {**hidden, "include_with": "--include-tools"}} if hidden else {}),
+            "leads": [cite.tagged(clean(e, args), e["ref"]) for e in gaps[:3]],
             "omissions": {"selection": max(0, len(matches) - len(rows))},
             "next": sum((next_for(e)[:1] for e in rows[:2]), []) + sum((next_for(e)[-1:] for e in gaps[:1]), [])}
 
@@ -1006,6 +1029,10 @@ def run(args):
             section["recordings"] = [{k: v for k, v in r.items() if v is not None} for r in g["recordings"]]
         sections.append(section)
     result = {"scope": combined_scope(scope, groups), "harnesses": sections}
+    if args.action != "overview":
+        # One list across harnesses: rank tiers interleave; time order keeps each harness's recorded order.
+        merged = sorted((row for sec in sections for row in sec.pop("results")), key=lambda row: row["_order"])
+        result["results"] = [{k: v for k, v in row.items() if k != "_order"} for row in merged]
     for sec in sections:
         sec["scope"].pop("snapshot", None)
     if repository is not None:

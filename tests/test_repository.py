@@ -189,7 +189,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual({(row["recorded_sha"], row["subject"]) for row in self.links(path)},
                          {("aaaa111", "fix: two"), ("bbbb222", "feat: one")})
         value = self.select(path, "--include", "git", "--kind", "tool_call", "--fields", "kind")
-        row, = value["harnesses"][0]["results"]
+        row, = value["results"]
         self.assertEqual(sorted(item["recorded_sha"] for item in row["git"]), ["aaaa111", "bbbb222"])
         counted = self.sql(path, "SELECT count(*) AS events, count(DISTINCT event_id) AS distinct_events "
                                  "FROM events WHERE kind = 'tool_call'", "--include", "git")
@@ -224,7 +224,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertTrue(all(row["sha"] is None and row["path"] is None for row in value["results"]))
         self.assertEqual(value["status"], "partial")  # no repository at the invocation directory
         self.assertIn("files", value["omissions"]["incomplete_inputs"])
-        rows = self.select(path, "--include", "git,files", "--kind", "tool_call")["harnesses"][0]["results"]
+        rows = self.select(path, "--include", "git,files", "--kind", "tool_call")["results"]
         self.assertEqual((rows[0]["git"], rows[0]["file"]), ([], None))
 
     def test_spec_query_joins_events_commits_changes_files(self):
@@ -320,7 +320,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual((files["new.md"]["tracked"], files["new.md"]["index_status"]), (False, "?"))
         self.assertEqual(files["src/app.py"]["blob_sha"],
                          self.git(repo, "hash-object", "src/app.py"))
-        row, = self.select(path, "--include", "files", "--kind", "tool_call", "--repo", repo)["harnesses"][0]["results"]
+        row, = self.select(path, "--include", "files", "--kind", "tool_call", "--repo", repo)["results"]
         self.assertEqual((row["repo_path"], row["file"]["path"], row["file"]["lines"]), ("src/app.py", "src/app.py", 2))
 
     def test_file_limits_and_symbols(self):

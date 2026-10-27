@@ -62,6 +62,9 @@ def incomplete(value, scope):
         reasons.append("query_limit")
     if omissions.get("envelope_omitted"):
         reasons.append("output_budget")
+    elif omitted_rows(omissions):
+        # Truncated delivery is harmless to its reader but not to a consumer treating it as the whole set.
+        reasons.append("rows_omitted")
     if value.get("status") == "partial":
         reasons.append("upstream_partial")
     return reasons
@@ -114,8 +117,8 @@ def load_rows(raw):
             more = value.get("detail", {}).get("more_bytes") if isinstance(value.get("detail"), dict) else None
             raise ValueError("Input envelope omitted its rows to fit --max-bytes; rerun the producer with "
                              + (f"--max-bytes {more} or more" if more else "a larger --max-bytes"))
-        if isinstance(value.get("harnesses"), list):
-            # Grouped sessions.py envelopes: one table of all harnesses' rows, each row tagged.
+        if isinstance(value.get("harnesses"), list) and not isinstance(value.get("results"), list):
+            # Grouped sessions.py envelopes (overview): one table of all harnesses' rows, each row tagged.
             rows = []
             for group in value["harnesses"]:
                 if not isinstance(group, dict):
@@ -151,12 +154,6 @@ def _holders(value):
     return [value] + [g for g in value.get("harnesses", []) if isinstance(g, dict)]
 
 
-def _partial(value):
-    """Primary rows left the output; an error status says more and is kept."""
-    if value.get("status") != "error":
-        value["status"] = "partial"
-
-
 def _drop(holder, key, n):
     del holder[key][len(holder[key]) - n:]
     omissions = holder.setdefault("omissions", {})
@@ -187,6 +184,8 @@ def _previews(chars):
         for holder in _holders(value):
             for key in OPTIONAL + PRIMARY:
                 for row in holder.get(key) if isinstance(holder.get(key), list) else ():
+                    if isinstance(row, dict) and row.get("selected"):
+                        continue  # The event a caller asked for keeps its text until _selected_text.
                     text = row.get("text") if isinstance(row, dict) else None
                     if isinstance(text, str) and len(text) > chars:
                         row["text"] = text[:chars]
@@ -233,12 +232,36 @@ def _rows(value, budget):
         if not live:
             return
         holder, key = max(live, key=lambda c: len(c[0][c[1]]))
+        items = holder[key]
+        chosen = [i for i, row in enumerate(items) if isinstance(row, dict) and row.get("selected")]
+        if chosen and len(items) == len(chosen):
+            lists.remove((holder, key))
+            continue
+        # A selected row stays; its farthest neighbor goes first. Otherwise the end goes, so ranking and paging hold.
+        index = max((i for i in range(len(items)) if i not in chosen),
+                    key=lambda i: (min(abs(i - c) for c in chosen), i)) if chosen else len(items) - 1
         # A dropped row takes its bytes and one comma; re-encode once the estimate fits.
-        size -= len(encoded(holder[key][-1]))
+        size -= len(encoded(items[index]))
+        # Budget drops truncate, not invalidate: omissions and delivery.complete record them; status stays.
+        items.append(items.pop(index))
         _drop(holder, key, 1)
-        _partial(value)
         if size <= budget:
             size = len(encoded(value))
+
+
+def _selected_text(value, budget):
+    """Last before the coverage floor: clip a selected row's text just enough to fit."""
+    for holder in _holders(value):
+        for row in holder.get("results") if isinstance(holder.get("results"), list) else ():
+            text = row.get("text") if isinstance(row, dict) and row.get("selected") else None
+            over = len(encoded(value)) - budget
+            if isinstance(text, str) and over > 0:
+                keep = max(160, len(text) - over - 160)
+                if keep < len(text):
+                    row["text"] = text[:keep]
+                    row["text_omitted"] = row.get("text_omitted", 0) + len(text) - keep
+                    row["text_state"] = "previewed"
+                    row["text_hint"] = "payload --ref REF reads the rest; or raise --max-bytes"
 
 
 def _floor(value, budget):
@@ -280,14 +303,14 @@ LEVELS = (("full", None), ("sparse", _sparse), ("no_snapshot", _snapshot), ("pre
           ("examples_2", _examples(2)), ("group_scope", _group_scope), ("examples_0", _examples(0, EXAMPLES)),
           ("previews_80", _previews(80)), ("aggregates_1", _examples(1, AGGREGATES)),
           ("aggregates_0", _examples(0, AGGREGATES)), ("rows", _rows),
-          ("coverage", _floor))
+          ("selected_text", _selected_text), ("coverage", _floor))
 
 
 def _delivery(result):
     """complete is true only when no limit, paging, budget or text cut is reported anywhere in the envelope."""
     scope = result.get("scope") if isinstance(result.get("scope"), dict) else {}
     reasons = [r for r in incomplete(result, scope) if r != "upstream_partial"]
-    if any(omitted_rows(h.get("omissions")) for h in _holders(result)):
+    if "rows_omitted" not in reasons and any(omitted_rows(h.get("omissions")) for h in _holders(result)):
         reasons.append("rows_omitted")
     if any(k.endswith("_budget") and v for h in _holders(result) for k, v in (h.get("omissions") or {}).items()):
         reasons.append("output_budget")
@@ -303,8 +326,9 @@ def _delivery(result):
                           **({"incomplete_reasons": reasons} if reasons else {})}
 
 
-def emit(result, max_bytes=8192):
-    """Emit the most detailed level that fits; never truncate serialized bytes."""
+def emit(result, max_bytes=8192, render=None):
+    """Emit the most detailed level that fits; never truncate serialized bytes. render(result) -> text
+    replaces the JSON with a view of that same level."""
     if max_bytes < MIN_BYTES:
         raise ValueError(f"--max-bytes must be at least {MIN_BYTES}")
     if isinstance(result, dict):
@@ -325,7 +349,7 @@ def emit(result, max_bytes=8192):
         if size <= max_bytes:
             break
         richer = size
-    sys.stdout.buffer.write(encoded(result))
+    sys.stdout.buffer.write(render(result).encode() + b"\n" if render else encoded(result))
 
 
 def encoded(value):

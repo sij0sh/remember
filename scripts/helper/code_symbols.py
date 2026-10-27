@@ -198,6 +198,23 @@ def _es_clause_rows(clause, module):
     return rows
 
 
+def _type_only(node):
+    """`import type`/`export type`, or every named specifier marked `type`: erased at runtime."""
+    if any(c.type == "type" and not c.is_named for c in node.children):
+        return True
+    clause = next((c for c in node.named_children if c.type in ("import_clause", "export_clause")), None)
+    if clause is None:
+        return False
+    holders = clause.named_children if clause.type == "import_clause" else [clause]
+    specs = []
+    for child in holders:
+        if child.type in ("named_imports", "export_clause"):
+            specs += [s for s in child.named_children if s.type in ("import_specifier", "export_specifier")]
+        else:
+            return False  # a default or namespace binding is a runtime value
+    return bool(specs) and all(any(k.type == "type" and not k.is_named for k in s.children) for s in specs)
+
+
 def _es_imports(node):
     """Static imports, re-exports, and literal `require(...)`/`import(...)` calls."""
     kind = node.type
@@ -306,11 +323,11 @@ def symbols(data, repo_id, path, ext):
     parser = f"tree-sitter-{language}"
     rows = []
 
-    def row(kind, name, qualname, parent, module, node, statement):
+    def row(kind, name, qualname, parent, module, node, statement, **extra):
         rows.append({"repo_id": repo_id, "path": path, "kind": kind, "name": name, "qualname": qualname,
                      "parent": parent, "module": module, "line": node.start_point[0] + 1,
                      "end_line": node.end_point[0] + 1, "parser": parser, "language": language,
-                     "node_kind": statement})
+                     "node_kind": statement, **extra})
 
     # Iterative walk: deep expression trees must not exhaust Python's stack.
     stack = [(child, (), None) for child in reversed(tree.root_node.named_children)]
@@ -319,8 +336,10 @@ def symbols(data, repo_id, path, ext):
         parent = separator.join(scope) or None
         found = imports(node)
         if found is not None:
+            erased = {"type_only": True} if language in ("typescript", "javascript") and node.type in (
+                "import_statement", "export_statement") and _type_only(node) else {}
             for name, module, qualname in found:
-                row("import", name, qualname, parent, module, node, node.type)
+                row("import", name, qualname, parent, module, node, node.type, **erased)
             continue
         defined = definition(node, enclosing)
         if defined and defined[1]:

@@ -213,6 +213,57 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(build['entrypoint_hint'], 'manifest_reference')
         self.assertIn('package.json', build['referenced_by'])
 
+    def test_type_only_imports_close_no_cycle(self):
+        self.write('src/a.ts', "import type { B } from './b';\nexport const a = 1;\nexport type A = B;\n")
+        self.write('src/b.ts', "import { a } from './a';\nexport type B = typeof a;\n")
+        self.write('src/c.ts', "import { type D } from './d';\nimport { d } from './d';\nexport const c: D = d;\n")
+        self.write('src/d.ts', "import { c } from './c';\nexport const d = 1;\nexport type D = number;\nexport const e = c;\n")
+        edges = self.cli('query', '--sql', "SELECT s.path AS src, e.type_only FROM edges e JOIN nodes s ON s.id = e.source "
+                         "WHERE e.predicate = 'IMPORTS' ORDER BY 1, 2")['results']
+        self.assertIn({'src': 'src/a.ts', 'type_only': 1}, edges)
+        self.assertIn({'src': 'src/c.ts', 'type_only': 1}, edges)
+        self.assertIn({'src': 'src/c.ts', 'type_only': 0}, edges)
+        result = self.cli('analyze', 'cycles')
+        self.assertEqual([r['files'] for r in result['results']], [['src/c.ts', 'src/d.ts']])
+        self.assertEqual(result['scope']['type_only_excluded']['pairs'], 1)
+        every = self.cli('analyze', 'cycles', '--include-type-only')['results']
+        self.assertEqual(len(every), 2)
+
+    def test_string_literals_mark_orphans_as_entrypoints(self):
+        self.write('src/server.ts', "export const page = '<script src=\"/app-shell.js\"></script>';\n")
+        self.write('src/app-shell.ts', 'export const shell = 1;\n')
+        self.write('build.mjs', "for (const id of ['pi', 'codex']) build(`src/${id}.ts`);\n")
+        self.write('src/pi.ts', 'export const pi = 1;\n')
+        self.write('src/dead.ts', 'export const dead = 1;\n')
+        rows = {r['path']: r for r in self.cli('analyze', 'orphans')['results']}
+        self.assertEqual(rows['src/app-shell.ts']['entrypoint_hint'], 'path_literal')
+        self.assertEqual(rows['src/app-shell.ts']['referenced_by'], ['src/server.ts'])
+        self.assertEqual(rows['src/pi.ts']['entrypoint_hint'], 'stem_literal')
+        self.assertEqual(rows['src/dead.ts']['state'], 'no_inbound_edges')
+
+    def test_paging_truncates_without_partial(self):
+        self.fixture()
+        page = self.cli('map', '--kind', 'file', '--limit', '1')
+        self.assertEqual(page['status'], 'ok')
+        self.assertFalse(page['delivery']['complete'])
+        self.assertIn('results_truncated', page)
+
+    def test_unrelated_parser_gap_is_not_partial(self):
+        self.fixture()
+        self.write('broken.py', 'def (:\n')
+        neighbors = self.cli('neighbors', 'core.py')
+        self.assertGreater(neighbors['gaps']['count'], 0)
+        self.assertEqual(neighbors['status'], 'ok')
+        self.assertEqual(self.cli('find', 'save')['status'], 'partial')
+
+    def test_whole_text_is_capped_and_whole_prints_it(self):
+        for i in range(8):
+            self.write(f'm{i}.py', ''.join(f'value_{n} = {n}  # padding padding padding\n' for n in range(100)))
+        text = self.raw('map', '--no-primer')
+        self.assertTrue(text.startswith('REPOSITORY SUMMARY'))
+        self.assertIn('`map --whole` prints all 8 files', text)
+        self.assertTrue(self.raw('map', '--no-primer', '--whole').startswith('WHOLE REPOSITORY'))
+
     def test_impact_separates_direct_file_only_and_indirect_consumers(self):
         self.write('core.py', 'def save(value):\n    return value\ndef load():\n    return 1\n')
         self.write('saver.py', 'from core import save\ndef run():\n    return save(1)\n')

@@ -27,6 +27,18 @@ def compact_row(row):
     return out
 
 
+def check_fields(fields, rows, known=()):
+    """Refuse a --fields name no row carries, instead of printing a blank column; rows=None checks known only."""
+    if not fields:
+        return
+    # Schema order puts the common columns first, where a clipped error message still shows them.
+    present = list(dict.fromkeys([*known, *(k for row in rows or () if isinstance(row, dict) for k in row)]))
+    unknown = [f for f in fields if f not in present]
+    # An empty page cannot show which columns exist, so only a declared schema can refuse it.
+    if unknown and (present or rows is None):
+        raise ValueError(f"--fields: no column {', '.join(unknown)}; available: {', '.join(present)}")
+
+
 def project_rows(rows, fields):
     return [{k: row[k] for k in fields if k in row} for row in rows] if fields else list(rows)
 

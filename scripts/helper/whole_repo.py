@@ -5,6 +5,8 @@ from pathlib import PurePosixPath
 # A capture at or under both limits is cheaper to read than to query.
 MAX_LINES = 3000
 MAX_BYTES = 200_000
+# Bare map prints whole text only up to an analyze page; `map --whole` raises the cap to MAX_BYTES.
+TEXT_BYTES = 24_000
 # Generated dependency pins: large, rarely informative, omitted and named.
 LOCKFILES = {"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "Gemfile.lock", "composer.lock", "go.sum", "flake.lock"}
@@ -61,19 +63,20 @@ def header(graph, warnings, skipped, primer=None):
     return out
 
 
-def render(graph, warnings, max_lines=MAX_LINES, primer=None):
+def render(graph, warnings, max_lines=MAX_LINES, primer=None, max_bytes=TEXT_BYTES):
     """The full source as plain text, or None when the capture exceeds the limits."""
     files, skipped = readable(graph)
     lines = sum(line_count(r["text"]) for r in files)
     size = sum(len(r["text"].encode()) for r in files)
-    if not files or not max_lines or lines > max_lines or size > MAX_BYTES:
+    if not files or not max_lines or lines > max_lines or size > min(max_bytes, MAX_BYTES):
         return None
     out = [f"WHOLE REPOSITORY: all {len(files)} readable captured files ({lines} lines) follow.",
            "Read them directly; graph queries add little at this size. `map --kind file` returns the JSON listing.",
            *header(graph, warnings, skipped, primer)]
     for row in files:
         out += ["", f"==> {row['path']} <==", row["text"].removesuffix("\n")]
-    return "\n".join(out) + "\n"
+    text = "\n".join(out) + "\n"
+    return text if len(text.encode()) <= max_bytes else None
 
 
 def summary(graph, warnings, max_lines=MAX_LINES, primer=None):
@@ -118,8 +121,11 @@ def summary(graph, warnings, max_lines=MAX_LINES, primer=None):
         shown = set(ordered[:SUMMARY_ROWS - 1]) | {"(other directories)"}
     coverage = graph.body["coverage"]
     gaps = coverage.get("gaps", {})
-    out = [f"REPOSITORY SUMMARY: {len(files)} readable files, {sum(sizes.values())} lines "
-           f"(whole-source limits: {max_lines} lines / {MAX_BYTES} bytes).",
+    size = sum(len(r["text"].encode()) for r in files)
+    whole = sum(sizes.values()) <= max_lines and size <= MAX_BYTES
+    out = [f"REPOSITORY SUMMARY: {len(files)} readable files, {sum(sizes.values())} lines, {size} bytes "
+           f"(whole text: {TEXT_BYTES} bytes; `map --whole`: {max_lines} lines / {MAX_BYTES} bytes).",
+           *([f"`map --whole` prints all {len(files)} files ({size} bytes)."] if whole else []),
            *header(graph, warnings, skipped, primer),
            f"graph: {coverage.get('nodes', 0)} nodes, {coverage.get('edges', 0)} edges, gaps "
            + (", ".join(f"{k} {v}" for k, v in sorted(gaps.items())) or "none"),

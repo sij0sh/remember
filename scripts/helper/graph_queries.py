@@ -458,7 +458,7 @@ TABLES = {
     "nodes": {"id": "TEXT", "kind": "TEXT", "key": "TEXT", "path": "TEXT", "name": "TEXT", "qualname": "TEXT",
               "line": "INTEGER", "end_line": "INTEGER", "symbol_kind": "TEXT", "language": "TEXT", "is_test": "INTEGER", "ref": "TEXT"},
     "edges": {"id": "TEXT", "source": "TEXT", "predicate": "TEXT", "target": "TEXT", "resolution": "TEXT",
-              "rule": "TEXT", "evidence": "TEXT", "ref": "TEXT"},
+              "rule": "TEXT", "evidence": "TEXT", "type_only": "INTEGER", "ref": "TEXT"},
     "gaps": {"area": "TEXT", "reason": "TEXT", "path": "TEXT", "line": "INTEGER", "predicate": "TEXT", "text": "TEXT",
              "rule": "TEXT", "bindings": "INTEGER", "calls": "INTEGER", "language": "TEXT", "error": "TEXT",
              "candidates": "TEXT"},
@@ -471,7 +471,8 @@ def query(graph, sql, params=None, limit=1000, seconds=5.0):
     db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 4*1024*1024)
     db.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 128*1024)
     sources = {"nodes": [graph.public(n) for n in graph.body["nodes"]],
-               "edges": [{**e, "ref": reference(graph.snapshot, "edges", e["id"])} for e in graph.body["edges"]],
+               "edges": [{**e, "type_only": int(bool(e.get("type_only"))), "ref": reference(graph.snapshot, "edges", e["id"])}
+                         for e in graph.body["edges"]],
                # Python call gaps are one row per call; TS/JS and Rust rows carry their own count.
                "gaps": [{**g, "calls": g.get("calls", 1)} if g["area"] == "calls" else g for g in graph.body["gaps"]],
                "files": [{**r, "ref": reference(graph.snapshot, "source", r["path"])} for r in graph.body["source"]["files"]]}
