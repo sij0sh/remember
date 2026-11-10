@@ -34,7 +34,9 @@ CHECKPOINT_COLUMNS = {
     "publication_ref": "JSON", "original_event_id": "VARCHAR", "coverage_end_id": "VARCHAR",
     "boundary_status": "VARCHAR", "boundary_ref": "JSON", "boundary_event_id": "VARCHAR",
     "boundary_order": "BIGINT", "boundary_items": "BIGINT", "structured": "JSON", "version": "VARCHAR",
-    "adapter": "VARCHAR", "basis": "VARCHAR", "interpretation": "VARCHAR",
+    "checkpoint_key": "VARCHAR", "coverage_start_id": "VARCHAR", "prepared_leaf_id": "VARCHAR",
+    "published_leaf_id": "VARCHAR", "retained_anchor": "VARCHAR", "read_files": "JSON",
+    "modified_files": "JSON", "adapter": "VARCHAR", "basis": "VARCHAR", "interpretation": "VARCHAR",
 }
 STRUCTURED_GIT = {"git_plan_context": "plan_snapshot", "git_commit_plan": "commit_plan",
                   "git_record": "commit_record"}
@@ -248,7 +250,10 @@ def checkpoints(recordings, cache):
             coverage[status] += 1
             if not isinstance(structured, (dict, list)):
                 coverage["unsupported"] += 1
-            version = structured.get("version") if isinstance(structured, dict) else None
+            # The Pi v3 envelope owns the schema version; older flat checkpoints keep it in `structured`.
+            version = event.get("schema_version")
+            if version is None and isinstance(structured, dict):
+                version = structured.get("version")
             boundary_group = graph["by_id"].get(coverage_end) or []
             rows.append({
                 "checkpoint_id": f"{event.get('recording_id')}#{event.get('event_id')}",
@@ -263,6 +268,12 @@ def checkpoints(recordings, cache):
                 "boundary_order": boundary.get("order") if boundary else None,
                 "boundary_items": len(boundary_group) if boundary_group else None,
                 "structured": structured, "version": str(version) if version is not None else None,
+                "checkpoint_key": event.get("checkpoint_id"),
+                "coverage_start_id": event.get("coverage_start_id"),
+                "prepared_leaf_id": event.get("prepared_at_leaf"),
+                "published_leaf_id": event.get("published_at_leaf"),
+                "retained_anchor": event.get("retained_anchor"),
+                "read_files": event.get("read_files"), "modified_files": event.get("modified_files"),
                 "adapter": f"{event.get('harness')}:checkpoint", "basis": "recorded_checkpoint",
                 "interpretation": "structured" if isinstance(structured, (dict, list)) else "unsupported",
             })

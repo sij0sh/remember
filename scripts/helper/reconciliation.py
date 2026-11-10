@@ -9,6 +9,7 @@ dimension, lane, branch and time scope make it deterministic.
 import json
 import re
 
+from . import summaries
 from .message_segments import prose
 
 DIMENSIONS = ("requested", "edited", "verified", "committed", "pushed", "live_confirmed",
@@ -188,42 +189,44 @@ def observations(request_event, operations, witnesses, checkpoints=()):
 
 
 def claims_for(checkpoint, include_commit_state=True):
-    """Claims extracted from one original checkpoint; unsupported shapes yield no claims."""
+    """Claims extracted from one original checkpoint; unsupported shapes yield no claims.
+
+    Items keep their original text instead of a serialized dictionary, and a
+    continuation subfield is its own claim. ``summary_items`` owns the full
+    text/status/label grain; these rows stay the reconciliation-facing view.
+    """
     structured = checkpoint.get("structured")
     claims = []
     if not isinstance(structured, dict):
         return claims
-    for field, dimension in CLAIM_FIELDS.items():
-        value = structured.get(field)
-        if value in (None, "", [], {}):
+    commit_fields = ("currentState", "continuedState", "continuationState", "openIssues", "nextActions")
+    for item in summaries.structured_items(structured):
+        section, subfield = item["section"], item.get("subfield")
+        dimension = CLAIM_FIELDS.get(section)
+        if section == "continuationState":
+            dimension = "blocked_remaining" if subfield == "immediateNextStep" else None
+        text = _text(item["text"])
+        if not text:
             continue
-        values = value if isinstance(value, list) else [value]
-        for item in values:
-            text = _text(item)
-            if not text:
-                continue
-            claims.append({"kind": "claim", "checkpoint_id": checkpoint.get("checkpoint_id"),
-                           "field": field, "dimension": dimension, "value": text,
-                           "excerpt": _excerpt(text), "evidence_kind": "checkpoint_claim",
+        field = section if not subfield else f"{section}.{subfield}"
+        claims.append({"kind": "claim", "checkpoint_id": checkpoint.get("checkpoint_id"),
+                       "field": field, "dimension": dimension, "value": text,
+                       "excerpt": _excerpt(text), "evidence_kind": "checkpoint_claim",
+                       "ref": checkpoint.get("publication_ref"), "claimed_status": item.get("status"),
+                       "labels": item.get("labels")})
+        if not include_commit_state or section not in commit_fields:
+            continue
+        raw = item["text"]
+        if UNCOMMITTED.search(raw):
+            claims.append({"kind": "commit_state", "checkpoint_id": checkpoint.get("checkpoint_id"),
+                           "field": field, "dimension": "committed", "value": "uncommitted",
+                           "excerpt": _excerpt(raw), "evidence_kind": "checkpoint_claim",
                            "ref": checkpoint.get("publication_ref")})
-    if include_commit_state:
-        for field in ("currentState", "continuedState", "continuationState", "openIssues", "nextActions"):
-            value = structured.get(field)
-            values = value if isinstance(value, list) else [value]
-            for item in values:
-                text = _text(item, 500)
-                if not text:
-                    continue
-                if UNCOMMITTED.search(text):
-                    claims.append({"kind": "commit_state", "checkpoint_id": checkpoint.get("checkpoint_id"),
-                                   "field": field, "dimension": "committed", "value": "uncommitted",
-                                   "excerpt": _excerpt(text), "evidence_kind": "checkpoint_claim",
-                                   "ref": checkpoint.get("publication_ref")})
-                if UNPUSHED.search(text):
-                    claims.append({"kind": "commit_state", "checkpoint_id": checkpoint.get("checkpoint_id"),
-                                   "field": field, "dimension": "pushed", "value": "unpushed",
-                                   "excerpt": _excerpt(text), "evidence_kind": "checkpoint_claim",
-                                   "ref": checkpoint.get("publication_ref")})
+        if UNPUSHED.search(raw):
+            claims.append({"kind": "commit_state", "checkpoint_id": checkpoint.get("checkpoint_id"),
+                           "field": field, "dimension": "pushed", "value": "unpushed",
+                           "excerpt": _excerpt(raw), "evidence_kind": "checkpoint_claim",
+                           "ref": checkpoint.get("publication_ref")})
     return claims
 
 

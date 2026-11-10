@@ -37,7 +37,7 @@ flowchart LR
 |---|---|
 | Known pitfalls | `investigate` `pitfall` view: failed operations, human corrections; `signals TARGET` per file |
 | Critical invariants | `invariant` view: human "must/never" constraints, found without goal keywords |
-| Current task state | `task` view: unverified requests, checkpoint claims; `trace REF` splits requested, edited, verified, committed, pushed |
+| Current task state | `task` view: unverified requests, checkpoint/summary claims; `trace REF` splits requested, edited, verified, committed, pushed |
 | Architectural decisions | `decision` view: human choices, assistant proposals (attributed, with later rejections); `prior_work` commits ranked against goal words |
 
 Each view reports `leads_found`, `none_found_in_scanned_scope`, `not_searched` or `unavailable`, so an empty view is never silent. Recordings are scheduled across harnesses and ages: half the budget goes to the newest matches, half to older context.
@@ -94,7 +94,9 @@ python3 "$S/remember.py" query "SELECT text, cite FROM events WHERE role='user' 
 python3 "$S/remember.py" query 'SELECT path, count(*) AS n FROM changes GROUP BY path ORDER BY n DESC LIMIT 10'
 ```
 
-Tables: `nodes`, `edges`, `files`, `gaps`, `commits`, `changes`, `file_status`, `commit_links`, `events`, `sessions`, `operations`, `checkpoints`, `edit_hunks`, `edit_symbols`, `message_segments`, `episodes`, `episode_links`, `file_observations`, `change_observations`. SQL is read-only, built-in SQLite. See [runtime contracts](references/runtime.md).
+Tables: `nodes`, `edges`, `files`, `gaps`, `commits`, `changes`, `file_status`, `commit_links`, `events`, `sessions`, `operations`, `checkpoints`, `summaries`, `summary_items`, `summary_refs`, `edit_hunks`, `edit_symbols`, `message_segments`, `episodes`, `episode_links`, `file_observations`, `change_observations`. SQL is read-only, built-in SQLite. See [runtime contracts](references/runtime.md).
+
+`summaries`, `summary_items` and `summary_refs` decode recorded Pi Shadow checkpoints, Pi rendered/native compactions and Claude standard summaries as attributed claims: exact section/subfield text, claimed status, snapshot-scoped citations and lifecycle (`custom_only` vs canonical compaction installation). They are claims, not outcomes; `summary_refs` resolves Pi `E####` labels only inside the recorded prepared branch and reports missing snapshots instead of guessing.
 
 ### Built-in operations
 

@@ -149,6 +149,10 @@ def scan_file(path, options, scope, ranges=None):
         if harness:
             profile, root = PROFILES[harness], hinted_root
     # Only small projections survive a record; payloads remain in the source.
+    # Recorded ancestry of every readable record, including records with no projected event
+    # (for example an empty assistant error record). Citation labels are branch positions:
+    # they need the full recorded chain, not only the rows a profile chose to emit.
+    record_index, record_conflicts = {}, set()
     for ref, record, error in records(path, scope, options.max_record_bytes, options.max_scan_bytes, ranges):
         if scope["events_projected"] >= options.max_events:
             scope["scan_complete"] = False
@@ -160,6 +164,16 @@ def scan_file(path, options, scope, ranges=None):
                 profile = PROFILES[harness]
             root = root or recorded_root(record, profile and profile["harness"])
         local = 0
+        if record is not None and profile and profile.get("correlation", {}).get("external_parent_id"):
+            correlation = profile.get("correlation", {})
+            identity = first(correlation.get("external_message_id", []), record)
+            if identity:
+                parent = first(correlation.get("external_parent_id", []), record)
+                prior = record_index.get(identity)
+                if prior is not None and (prior.get("parent") != parent or prior.get("offset") != ref.get("offset")):
+                    record_conflicts.add(identity)
+                else:
+                    record_index.setdefault(identity, {"parent": parent, "ref": safe_ref(ref), "offset": ref.get("offset")})
         def add(kind, text="", payload_pointer=None, **fields):
             nonlocal local
             if scope["events_projected"] >= options.max_events:
@@ -268,6 +282,12 @@ def scan_file(path, options, scope, ranges=None):
                 kwargs["representation"] = rule["representation"]
             if rule.get("coverage_end") is not None:
                 kwargs["coverage_end_id"] = field(rule["coverage_end"], item, key)
+            # Named scalar/list projections for one record (for example envelope
+            # versions, producer ids and file lists that no event column owns).
+            for name, spec in (rule.get("fields") or {}).items():
+                val = field(spec, item, key)
+                if val is not None:
+                    kwargs[name] = val
             for name in ("origin", "channel", "purpose", "state", "text_state", "role"):
                 if rule.get(name) is not None:
                     kwargs[name] = rule[name]
@@ -548,7 +568,8 @@ def scan_file(path, options, scope, ranges=None):
     scope["calls_without_result"] += sum(e["kind"] == "tool_call" and "result_ref" not in e for e in events)
     return {"file": str(Path(path).absolute()), "session": sid, "parent_session": parent_session, "root": root,
             "harness_version": version, "sampled": bool(ranges),
-            "harness": profile["harness"] if profile else "unknown", "events": events}
+            "harness": profile["harness"] if profile else "unknown", "events": events,
+            "record_ancestry": record_index, "record_conflicts": record_conflicts}
 
 
 __all__ = ["scan_file", "safe_ref", "PROFILES", "detected", "recorded_root", "pointer",

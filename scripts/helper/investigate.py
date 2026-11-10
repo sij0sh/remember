@@ -330,7 +330,8 @@ class Packet:
             return "repository"
         return "historical_root"
 
-    def scan(self, recordings, operations, witnesses, checkpoints, active=False, deadline=None):
+    def scan(self, recordings, operations, witnesses, checkpoints, summary_items=(), summaries=(),
+             active=False, deadline=None):
         by_ref = {}
         for recording in recordings:
             for event in recording["events"]:
@@ -420,15 +421,57 @@ class Packet:
                      recording=files.get(op.get("recording_id")), op_paths={op.get("repo_path"), op.get("path")},
                      active=active,
                      extra={"path": op.get("path")} if op.get("path") else None)
+        items_by_summary = {}
+        for item in summary_items:
+            items_by_summary.setdefault(item.get("summary_id"), []).append(item)
+        summary_by_event = {}
+        checkpoint_twins = set()
+        for summary in summaries:
+            summary_by_event[(summary.get("recording_id"), summary.get("event_id"))] = summary
+            if summary.get("physical_kind") == "checkpoint" and summary.get("twin_key"):
+                checkpoint_twins.add(summary["twin_key"])
         for checkpoint in checkpoints:
             event = by_ref.get(_key(checkpoint.get("publication_ref")))
             if event is None:
                 continue
-            claims = reconciliation.claims_for(checkpoint)
-            text = "; ".join(c.get("excerpt") or str(c.get("value")) for c in claims[:3]) or prose(event)
+            summary = summary_by_event.get((checkpoint.get("recording_id"), checkpoint.get("publication_event_id")))
+            items = items_by_summary.get(summary.get("summary_id"), []) if summary else []
+            text = _lead_text(items) if items else ""
+            if not text:
+                claims = reconciliation.claims_for(checkpoint)
+                text = "; ".join(c.get("excerpt") or str(c.get("value")) for c in claims[:3]) or prose(event)
+            extra = {"boundary_status": checkpoint.get("boundary_status"),
+                     "selection": "structured_checkpoint"}
+            if summary:
+                extra.update({"summary_id": summary.get("summary_id"),
+                              "representation": summary.get("representation"),
+                              "installation": summary.get("installation")})
             self.add(event, "task", "checkpoint_claim", "checkpoint_claim", text,
-                     recording=files.get(checkpoint.get("recording_id")), active=active,
-                     extra={"boundary_status": checkpoint.get("boundary_status")})
+                     recording=files.get(checkpoint.get("recording_id")), active=active, extra=extra)
+        if not active:
+            for summary in summaries:
+                if summary.get("physical_kind") in ("compact_boundary", "checkpoint"):
+                    continue
+                if summary.get("installation") not in ("canonical_compaction", "canonical_summary"):
+                    continue
+                if summary.get("twin_key") and summary.get("twin_key") in checkpoint_twins:
+                    continue
+                event = by_ref.get(_key(summary.get("ref")))
+                items = items_by_summary.get(summary.get("summary_id"), [])
+                text = _lead_text(items, prefer_turn=True)
+                if event is None or not text:
+                    continue
+                selection = ("rendered_shadow_without_structured_twin"
+                             if summary.get("representation") == "rendered_markdown"
+                             else "native_summary")
+                self.add(event, "task", "summary_claim", "summary_claim", text,
+                         recording=files.get(summary.get("recording_id")),
+                         context=prose(event),
+                         extra={"summary_id": summary.get("summary_id"),
+                                "representation": summary.get("representation"),
+                                "producer": summary.get("producer"),
+                                "installation": summary.get("installation"),
+                                "selection": selection})
         if not active:
             for recording in recordings:
                 self.unfinished(recording, operations, witnesses)
@@ -552,6 +595,49 @@ class Packet:
                          span=spans[0] if spans else None,
                          active=True, extra={"dimensions": _dimension_view(dims)})
         self.scan([recording], [o for o in ops if o.get("outcome") == "failed"], witnesses, checkpoints, active=True)
+
+
+LEAD_KINDS = ("objective", "next_action", "open_issue", "verification", "decision", "current_state")
+
+
+def _lead_text(items, prefer_turn=False):
+    """A bounded attributed summary lead: objective, next action and one live concern.
+
+    Split-turn native summaries keep the newer turn objective first; the older history
+    objective stays in ``summary_items`` instead of being flattened into this excerpt.
+    No item is treated as a request from the original human.
+    """
+    def ordered(scope=None, kind=None, status=None):
+        return [item for item in items
+                if (scope is None or item.get("scope") == scope)
+                and (kind is None or item.get("kind") == kind)
+                and (status is None or item.get("status") == status)]
+
+    picked = []
+    scopes = (("turn_prefix", "history", "continuation") if prefer_turn
+              else ("history", "continuation", "turn_prefix"))
+    for scope in scopes:
+        objective = ordered(scope, "objective")
+        if objective:
+            picked.append(objective[0]["text"])
+            break
+    for scope in scopes:
+        action = ordered(scope, "next_action")
+        if action:
+            picked.append(action[0]["text"])
+            break
+    if len(picked) < 3:
+        unverified = ordered(kind="verification", status="unverified")
+        extra = unverified or ordered(kind="open_issue") or ordered(kind="verification") \
+            or ordered(kind="decision") or ordered(kind="current_state")
+        if extra:
+            picked.append(extra[0]["text"])
+    seen = []
+    for text in picked:
+        flat = " ".join(str(text or "").split())
+        if flat and flat not in seen:
+            seen.append(flat)
+    return "; ".join(seen)[:900]
 
 
 def _dimension_view(dims):
@@ -730,11 +816,11 @@ def collect(args, providers, deadline, goal, paths, errors, sessions=True, graph
                                                graph if graph is not None else _graph(providers, goal))
     providers.needles = evidence_candidates.needles(packet.seeds)
     providers.scheduled = True
-    providers.load({"recordings", "operations", "checkpoints", "commit_links"})
+    providers.load({"recordings", "operations", "checkpoints", "commit_links", "summaries"})
     deadline.check()
     tables = providers.tables
     packet.scan(providers.recordings, tables.get("operations", []), tables.get("commit_links", []),
-                tables.get("checkpoints", []))
+                tables.get("checkpoints", []), tables.get("summary_items", []), tables.get("summaries", []))
     if active is not None:
         deadline.check()
         packet.active_task(active, state, providers.cache)

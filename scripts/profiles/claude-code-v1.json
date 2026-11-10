@@ -73,7 +73,11 @@
       ],
       "emit": "summary",
       "purpose": "summary",
-      "text": "/summary"
+      "text": "/summary",
+      "fields": {
+        "logical_parent_id": "/logicalParentUuid",
+        "anchor_id": "/leafUuid"
+      }
     },
     {
       "when": [
@@ -88,7 +92,17 @@
       ],
       "emit": "summary",
       "purpose": "compaction",
-      "text": "/content"
+      "text": "/content",
+      "fields": {
+        "compact_trigger": "/compactMetadata/trigger",
+        "pre_tokens": "/compactMetadata/preTokens",
+        "duration_ms": "/compactMetadata/durationMs",
+        "preserved_head_id": "/compactMetadata/preservedSegment/headUuid",
+        "anchor_id": "/compactMetadata/preservedSegment/anchorUuid",
+        "preserved_tail_id": "/compactMetadata/preservedSegment/tailUuid",
+        "retained_ids": "/compactMetadata/preservedMessages/uuids",
+        "logical_parent_id": "/logicalParentUuid"
+      }
     },
     {
       "when": [
@@ -120,7 +134,11 @@
       ],
       "emit": "summary",
       "purpose": "compaction",
-      "text": "/message/content"
+      "text": "/message/content",
+      "fields": {
+        "anchor_id": "/uuid",
+        "logical_parent_id": "/logicalParentUuid"
+      }
     },
     {
       "when": [

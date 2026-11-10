@@ -2,7 +2,7 @@
 import os
 from types import SimpleNamespace
 from . import (catalog, cite, commit_links, edit_hunks, episode_links, file_observations, message_segments, git_file_history, graph_cli, graph_queries,
-                operation_facts, repo_files)
+                operation_facts, repo_files, summaries)
 from .engine import Input
 from .root_map import parse_root_map, remap
 from .git_resolve import GitResolver
@@ -128,11 +128,13 @@ class Providers:
         """Replace recording-derived tables with a targeted scan, keeping Git facts loaded."""
         self.recording_files = list(files)
         self.recordings = []
-        keep = {"recordings", "operations", "checkpoints", "links", "episodes", "segments", "observations"}
+        keep = {"recordings", "operations", "checkpoints", "links", "episodes", "segments",
+                "observations"}
         self.loaded = [name for name in self.loaded if name not in keep]
         self.episodes = None
-        for key in ("events", "rows", "sessions", "operations", "checkpoints", "commit_links", "episodes",
-                    "episode_links", "message_segments", "file_observations", "change_observations"):
+        for key in ("events", "rows", "sessions", "operations", "checkpoints", "summaries", "summary_items",
+                    "summary_refs", "commit_links", "episodes", "episode_links", "message_segments",
+                    "file_observations", "change_observations"):
             self.tables.pop(key, None)
         self.load({"recordings", "operations", "checkpoints", "commit_links"})
 
@@ -274,6 +276,13 @@ class Providers:
         coverage["source"] = "recorded checkpoints; boundaries resolved on recorded lanes"
         coverage["complete"] = coverage.get("complete", True) and self.coverage["recordings"]["complete"]
         self.coverage["checkpoints"] = coverage
+
+    def load_summaries(self):
+        rows, items, refs, coverage = summaries.build(self.recordings, self.cache,
+                                                      self.tables.get("checkpoints", []))
+        self.tables["summaries"], self.tables["summary_items"], self.tables["summary_refs"] = rows, items, refs
+        coverage["complete"] = coverage.get("complete", True) and self.coverage["recordings"]["complete"]
+        self.coverage["summaries"] = coverage
 
     def load_edits(self):
         self.repo_id = self.resolver.identity(self.resolver.repo(self.store.root)) or self.store.root

@@ -1,6 +1,7 @@
 """Declarative public table catalog. Dependencies drive execution and schema help."""
 from dataclasses import dataclass
-from . import commit_links, edit_hunks, episode_links, file_observations, git_file_history, message_segments, operation_facts, repo_files
+from . import (commit_links, edit_hunks, episode_links, file_observations, git_file_history,
+               message_segments, operation_facts, repo_files, summaries)
 from .graph_queries import TABLES
 from .projection import FIELDS
 
@@ -52,10 +53,16 @@ CATALOG = {
                                  file_observations.CHANGE_GRAIN, ("change_id",), "transient"),
     "checkpoints": Table(operation_facts.CHECKPOINT_COLUMNS, "checkpoints", operation_facts.CHECKPOINT_GRAIN,
                          ("checkpoint_id",), "transient"),
+    "summaries": Table(summaries.SUMMARY_COLUMNS, "summaries", summaries.SUMMARY_GRAIN,
+                       ("summary_id",), "transient"),
+    "summary_items": Table(summaries.ITEM_COLUMNS, "summaries", summaries.ITEM_GRAIN,
+                           ("item_id",), "transient"),
+    "summary_refs": Table(summaries.REF_COLUMNS, "summaries", summaries.REF_GRAIN,
+                          ("ref_id",), "transient"),
 }
 DEPENDENCIES = {"graph": (), "recordings": (), "git": (), "links": ("recordings",),
                 "edits": ("recordings", "graph"), "operations": ("recordings",),
-                "checkpoints": ("recordings",), "segments": ("recordings",),
+                "checkpoints": ("recordings",), "summaries": ("checkpoints",), "segments": ("recordings",),
                 "episodes": ("recordings", "operations", "links"),
                 "observations": ("recordings", "operations"), "status": ()}
 

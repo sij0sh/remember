@@ -64,7 +64,17 @@
       "purpose": "compaction",
       "text": "/summary",
       "text_fallback": "/content",
-      "first_kept_id": "/firstKeptEntryId"
+      "first_kept_id": "/firstKeptEntryId",
+      "fields": {
+        "checkpoint_id": "/details/shadowCheckpoint/checkpointId",
+        "shadow_coverage_end": "/details/shadowCheckpoint/coverage/coverageEndEntryId",
+        "prepared_at_leaf": "/details/shadowCheckpoint/coverage/preparedAtLeafId",
+        "published_at_leaf": "/details/shadowCheckpoint/coverage/publishedAtLeafId",
+        "retained_anchor": "/details/shadowCheckpoint/retainedAnchor",
+        "read_files": "/details/readFiles",
+        "modified_files": "/details/modifiedFiles",
+        "coverage_start_id": "/details/shadowCheckpoint/coverage/sourceStartEntryId"
+      }
     },
     {
       "when": [
@@ -77,7 +87,17 @@
       "purpose": "branch",
       "text": "/summary",
       "text_fallback": "/content",
-      "first_kept_id": "/firstKeptEntryId"
+      "first_kept_id": "/firstKeptEntryId",
+      "fields": {
+        "checkpoint_id": "/details/shadowCheckpoint/checkpointId",
+        "shadow_coverage_end": "/details/shadowCheckpoint/coverage/coverageEndEntryId",
+        "prepared_at_leaf": "/details/shadowCheckpoint/coverage/preparedAtLeafId",
+        "published_at_leaf": "/details/shadowCheckpoint/coverage/publishedAtLeafId",
+        "retained_anchor": "/details/shadowCheckpoint/retainedAnchor",
+        "read_files": "/details/readFiles",
+        "modified_files": "/details/modifiedFiles",
+        "coverage_start_id": "/details/shadowCheckpoint/coverage/sourceStartEntryId"
+      }
     },
     {
       "when": [
@@ -414,7 +434,17 @@
       "purpose": "checkpoint",
       "text": "/data/structured",
       "coverage_end": "/data/coverage/coverageEndEntryId",
-      "text_fallback": "/data/summary"
+      "text_fallback": "/data/summary",
+      "first_kept_id": "/data/firstKeptEntryId",
+      "fields": {
+        "checkpoint_id": "/data/checkpointId",
+        "schema_version": "/data/version",
+        "coverage_start_id": "/data/coverage/sourceStartEntryId",
+        "prepared_at_leaf": "/data/coverage/preparedAtLeafId",
+        "published_at_leaf": "/data/coverage/publishedAtLeafId",
+        "read_files": "/data/details/readFiles",
+        "modified_files": "/data/details/modifiedFiles"
+      }
     },
     {
       "when": [
@@ -434,7 +464,17 @@
       "purpose": "checkpoint",
       "text": "/data/structured",
       "coverage_end": "/data/coverageEndEntryId",
-      "text_fallback": "/data/summary"
+      "text_fallback": "/data/summary",
+      "first_kept_id": "/data/firstKeptEntryId",
+      "fields": {
+        "checkpoint_id": "/data/checkpointId",
+        "schema_version": "/data/version",
+        "coverage_start_id": "/data/coverage/sourceStartEntryId",
+        "prepared_at_leaf": "/data/coverage/preparedAtLeafId",
+        "published_at_leaf": "/data/coverage/publishedAtLeafId",
+        "read_files": "/data/details/readFiles",
+        "modified_files": "/data/details/modifiedFiles"
+      }
     },
     {
       "when": [
@@ -447,7 +487,17 @@
       "purpose": "checkpoint",
       "text": "/structured",
       "coverage_end": "/coverageEndEntryId",
-      "text_fallback": "/summary"
+      "text_fallback": "/summary",
+      "first_kept_id": "/firstKeptEntryId",
+      "fields": {
+        "checkpoint_id": "/checkpointId",
+        "schema_version": "/version",
+        "prepared_at_leaf": "/coverage/preparedAtLeafId",
+        "published_at_leaf": "/coverage/publishedAtLeafId",
+        "read_files": "/details/readFiles",
+        "modified_files": "/details/modifiedFiles",
+        "coverage_start_id": "/coverage/sourceStartEntryId"
+      }
     },
     {
       "when": [
