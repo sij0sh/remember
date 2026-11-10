@@ -1,0 +1,362 @@
+"""Inspect history lane: known histories, independent lanes, no transcript retention."""
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
+from helper import graph_cli, runtime, target_history
+from helper.operations import derive
+from helper.edit_hunks import anchor
+from helper.graph_store import Store
+from helper.budget import Deadline
+from helper.providers import Providers
+from support import invoke
+
+
+
+def split_line(line):
+    """Inverse of command_line: POSIX shell words, or the Windows argv parse."""
+    if os.name != "nt":
+        return shlex.split(line)
+    import ctypes
+    from ctypes import wintypes
+    parse = ctypes.windll.shell32.CommandLineToArgvW
+    parse.restype = ctypes.POINTER(wintypes.LPWSTR)
+    count = ctypes.c_int()
+    argv = parse(line, ctypes.byref(count))
+    try:
+        return [argv[i] for i in range(count.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
+class TargetHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        self.repo = self.home / "repo"
+        self.repo.mkdir()
+        self.cache = self.home / "cache"
+        self.archive = self.home / "recordings"
+        self.archive.mkdir()
+        self.write("a.py", "def target():\n    return 2\n")
+
+    def write(self, path, text):
+        dest = self.repo / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text)
+        return dest
+
+    def git(self, *args, repo=None):
+        return subprocess.check_output(["git", "-C", str(repo or self.repo), "-c", "user.name=Test",
+                                        "-c", "user.email=test@example.com", *args], text=True).strip()
+
+    def init(self):
+        self.git("init", "-q")
+        self.commit("initial")
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD")
+
+    def recording(self, sid="past", root=None, path="a.py", content=None, request="Reject the eager approach", extra=()):
+        content = content or "def target():\n    return 2\n"
+        rows = [{"type": "session", "id": sid, "cwd": str(root or self.repo)},
+                {"type": "message", "id": "u", "message": {"role": "user", "content": request}},
+                {"type": "message", "id": "a", "parentId": "u", "message": {"role": "assistant", "content": [
+                    {"type": "toolCall", "id": "c", "name": "write", "arguments": {"path": path, "content": content}}]}},
+                {"type": "message", "id": "r", "parentId": "a", "message": {"role": "toolResult", "toolCallId": "c",
+                 "toolName": "write", "isError": False, "content": [{"type": "text", "text": "done"}]}}, *extra]
+        dest = self.archive / (sid + ".jsonl")
+        dest.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return dest
+
+    def args(self, *argv):
+        return derive(runtime.parser().parse_args([*argv, "--repo", str(self.repo), "--cache", str(self.cache)]))
+
+    def run_command(self, *argv):
+        args = self.args(*argv)
+        return runtime.Runtime(runtime.Request(args, tuple(argv), None)).execute().document
+
+    def history(self, target="a.py::target", *argv):
+        args = self.args("inspect", target, "--recordings", str(self.archive), *argv)
+        store = Store(args.repo, args.cache)
+        providers = Providers(args, store, Deadline(30))
+        providers.load({"events"})
+        return target_history.run(args, store, lambda *a: graph_cli.get_graph(*a),
+                                  scanned=(providers.recordings, providers.session_coverage()))
+
+    def compact(self, *argv):
+        return target_history.compact(self.history(*argv)["results"])
+
+    def pinned_ref(self):
+        return self.run_command("inspect", "a.py::target", "--no-sessions")["target"]["ref"]
+
+    def cli(self, *argv):
+        result = invoke([*argv, "--repo", str(self.repo), "--cache", str(self.cache)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.json()
+
+    def test_edit_reaches_original_request_and_paired_result(self):
+        self.recording()
+        out = self.history()
+        lead = next(r for r in out["results"] if r["basis"] == "recorded_definition_at_edit")
+        self.assertEqual(lead["symbols"][0]["qualname"], "target")
+        command = lead["next"][0]["argv"]
+        # Windows argv quoting differs from shlex; reuse the portable inverse of command_line.
+        expanded = subprocess.check_output(split_line(command), text=True)
+        self.assertIn("Reject the eager approach", expanded)
+        self.assertIn("show", lead["next"][0]["argv"])
+        self.assertEqual(out["coverage"]["git"][0]["state"], "unavailable")
+
+    def test_compact_rows_drop_trivial_mentions_and_accept_timestamp(self):
+        mention = {"type": "message", "id": "m", "parentId": "u", "message": {"role": "assistant",
+                   "content": "a.py target looks fine"}}
+        self.recording(sid="ack", path="unrelated.py", content="x=1\n", request="yes", extra=[mention])
+        self.recording(sid="real", path="unrelated.py", content="x=1\n", request="Keep a.py target eager", extra=[mention])
+        rows = self.compact("a.py::target")
+        self.assertEqual([r["text"] for r in rows], ["Keep a.py target eager"])
+        self.assertIn("ack", {r["evidence"]["session"] for r in self.history("a.py::target")["results"]})
+
+    def test_renames_exact_paths_and_independent_git_lane(self):
+        self.init()
+        self.git("mv", "a.py", "renamed.py")
+        self.commit("rename")
+        self.recording(path="a.py")
+        self.recording(sid="backup", path="a.py.bak")
+        self.recording(sid="other", path="other/a.py")
+        out = self.history("renamed.py")
+        activity = [r for r in out["results"] if r["category"] == "recorded_activity"]
+        self.assertEqual({r["evidence"]["session"] for r in activity}, {"past"})
+        self.assertTrue(any(a["basis"] == "git_rename" for a in out["scope"]["aliases"]))
+        only_git = self.history("renamed.py", "--no-sessions")
+        self.assertTrue(only_git["results"])
+        self.assertEqual(only_git["coverage"]["sessions"]["state"], "not_searched")
+
+    def test_ambiguity_does_not_scan_and_refs_preserve_snapshot(self):
+        self.write("other.py", "def target():\n    return 3\n")
+        with patch("helper.providers.scan_scheduled", side_effect=AssertionError("scan")):
+            out = self.run_command("inspect", "target", "--recordings", str(self.archive))
+            self.assertEqual(out["coverage"]["target"]["reason"], "ambiguous")
+        ref = self.pinned_ref()
+        out = self.history(ref)
+        self.assertEqual(out["target"]["qualname"], "target")
+        self.assertEqual(out["target"]["snapshot"], ref.split("/")[0])
+        self.assertEqual(out["coverage"]["mapping"]["source_basis"], "pinned_source")
+        self.write("a.py", "def replacement():\n    return 4\n")
+        with self.assertRaisesRegex(ValueError, "changed since snapshot"):
+            self.history(ref)
+
+    def test_project_roots_and_path_relocation_are_separate(self):
+        old = self.home / "old"
+        self.recording(root=old)
+        self.assertFalse(self.history()["results"])
+        self.assertFalse(self.history("a.py", "--project-root", str(old))["results"])
+        out = self.history("a.py", "--project-root", str(old), "--root-map", f"{old}={self.repo}")
+        self.assertTrue(out["results"])
+        self.assertEqual(out["coverage"]["sessions"]["project_also"], [str(old)])
+
+    def test_symlinked_recorded_root_matches_the_resolved_project(self):
+        # Same class of mismatch: the recording stores a symlinked cwd, the GUI/graph root is resolved.
+        link = self.home / "link"
+        try:
+            link.symlink_to(self.repo, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.recording(root=link)
+        out = self.history()
+        self.assertEqual({r["evidence"]["session"] for r in out["results"]}, {"past"})
+
+    def test_split_repository_association(self):
+        old = self.home / "parent"
+        (old / "pkg").mkdir(parents=True)
+        (old / "pkg/a.py").write_text("def target():\n    return 1\n")
+        self.git("init", "-q", repo=old)
+        self.git("add", ".", repo=old)
+        self.git("commit", "-qm", "before split", repo=old)
+        self.recording(root=old, path="pkg/a.py")
+        out = self.history("a.py", "--project-root", str(old), "--history-repo", f"{old}=pkg")
+        self.assertTrue(any(r["category"] == "git_change" and r["subject"] == "before split" for r in out["results"]))
+        self.assertTrue(any(r["category"] == "recorded_activity" for r in out["results"]))
+
+    def test_mentions_use_paths_relative_to_each_recording_project(self):
+        parent = self.home
+        self.recording(root=parent, path="unrelated.py", request="a.py target needs a correction")
+        out = self.history("a.py::target", "--project-root", str(parent))
+        self.assertFalse(out["results"])
+        self.recording(sid="scoped", root=parent, path="unrelated.py", request="repo/a.py target needs a correction")
+        out = self.history("a.py::target", "--project-root", str(parent))
+        self.assertEqual({r["evidence"]["session"] for r in out["results"]}, {"scoped"})
+        self.assertEqual(out["results"][0]["category"], "text_mention")
+
+    def test_current_session_and_copied_results_excluded(self):
+        self.recording(sid="current")
+        echo = {"type": "message", "id": "echo", "message": {"role": "assistant", "content":
+                'Copied {"schema_version":1,"target":"a.py::target"}'}}
+        self.recording(sid="past", path="unrelated.py", content="x=1\n", extra=[echo])
+        out = self.history("a.py", "--exclude-session", "current")
+        self.assertFalse(out["results"])
+        self.assertEqual(out["coverage"]["sessions"]["recordings_excluded"], 1)
+
+    def test_later_correction_is_retrievable_without_keyword_in_request(self):
+        self.recording(sid="first", request="Reject the eager approach")
+        self.recording(sid="later", request="The earlier constraint is gone; use eager execution")
+        out = self.history()
+        self.assertEqual({r["evidence"]["session"] for r in out["results"]}, {"first", "later"})
+        self.assertEqual(out["coverage"]["sessions"]["independent_sessions"], 2)
+
+    def test_inspect_never_saves_transcript(self):
+        self.recording(request="UNIQUE_PRIVATE_REQUEST")
+        out = self.cli("inspect", "a.py::target", "--recordings", str(self.archive))
+        self.assertTrue(any(r["section"] == "history" for r in out["results"]))
+        retained = list(self.cache.rglob("report-*.json"))
+        self.assertEqual(retained, [])
+        self.assertFalse(any("UNIQUE_PRIVATE_REQUEST" in p.read_text() for p in self.cache.rglob("*.json")))
+
+    def test_exact_file_avoids_full_graph_capture(self):
+        with patch("helper.graph_cli.get_graph", side_effect=AssertionError("full graph")):
+            self.assertEqual(self.history("a.py")["target"]["path"], "a.py")
+            self.assertEqual(self.history("a.py::target")["target"]["qualname"], "target")
+
+    def test_duplicate_anchor_is_ambiguous_even_at_original_position(self):
+        self.assertEqual(anchor(["return 2"], 1, ["return 2", "return 2"]), ("ambiguous", None))
+        self.assertEqual(anchor(["return 2"], 1, ["return 2"]), ("exact", 0))
+        self.assertEqual(anchor(["return 2"], 1, ["pass", "return 2"]), ("shifted", 1))
+
+    def test_commit_witness_preserves_basis_and_expansion(self):
+        self.init()
+        sha = self.git("rev-parse", "HEAD")
+        extra = [{"type": "message", "id": "commit", "message": {"role": "assistant", "content": [
+            {"type": "toolCall", "id": "gc", "name": "bash", "arguments": {"command": "git commit -m initial"}}]}},
+            {"type": "message", "id": "committed", "parentId": "commit", "message": {"role": "toolResult",
+             "toolCallId": "gc", "toolName": "bash", "isError": False,
+             "content": [{"type": "text", "text": f"[main {sha[:8]}] initial"}]}}]
+        self.recording(extra=extra)
+        out = self.history()
+        witnesses = [r for r in out["results"] if r["category"] == "commit_witness"]
+        self.assertEqual(len(witnesses), 1)
+        self.assertEqual(witnesses[0]["evidence"]["sha"], sha)
+        self.assertEqual(witnesses[0]["evidence"]["confidence"], "recorded")
+        self.assertFalse(witnesses[0]["evidence"]["failed"])
+        self.assertTrue(witnesses[0]["next"])
+
+    def test_pinned_ref_fails_after_change_and_live_lines_do_not_match(self):
+        ref = self.pinned_ref()
+        self.write("a.py", "def unrelated():\n    return 9\n")
+        edit_call = {"type": "message", "id": "a", "message": {"role": "assistant", "content": [
+            {"type": "toolCall", "id": "c", "name": "edit", "arguments": {"path": "a.py", "edits": []}}]}}
+        edit_result = {"type": "message", "id": "r", "parentId": "a", "message": {"role": "toolResult",
+            "toolCallId": "c", "toolName": "edit", "isError": False,
+            "details": {"patch": "@@ -1,2 +1,2 @@\n def target():\n-    return 1\n+    return 2\n"},
+            "content": [{"type": "text", "text": "done"}]}}
+        path = self.archive / "edit.jsonl"
+        path.write_text("".join(json.dumps(r)+"\n" for r in [
+            {"type": "session", "id": "past", "cwd": str(self.repo)}, edit_call, edit_result]))
+        # A pinned ref never matches against bytes that are no longer on disk.
+        with self.assertRaisesRegex(ValueError, "changed since snapshot"):
+            self.history(ref)
+        live = self.history("a.py::unrelated")
+        self.assertFalse(any(r["basis"] == "recorded_text_matches_target_source" for r in live["results"]))
+        self.assertTrue(any(r["basis"] == "symbol -> file" for r in live["results"]))
+
+    def test_deleted_file_and_scan_limit_are_honest(self):
+        self.init()
+        self.git("rm", "a.py")
+        self.commit("delete")
+        self.recording()
+        out = self.history("a.py", "--max-scan-bytes", "100")
+        self.assertEqual(out["target"]["resolution"], "historical_path")
+        self.assertTrue(any(r["category"] == "git_change" for r in out["results"]))
+        self.assertEqual(out["coverage"]["sessions"]["state"], "partial")
+
+
+    def followup(self, text, id="f"):
+        return {"type": "message", "id": id, "parentId": "r", "message": {"role": "user", "content": text}}
+
+    def test_exchange_is_one_row_carrying_its_request(self):
+        self.recording()
+        out = self.history()
+        rows = [r for r in out["results"] if r["category"] == "recorded_activity"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["evidence"]["kind"], "tool_call")
+        self.assertEqual(rows[0]["basis"], "recorded_definition_at_edit")
+        self.assertEqual(rows[0]["intent"]["request"]["text"], "Reject the eager approach")
+        self.assertEqual(rows[0]["intent"]["request"]["origin"], "human")
+
+    def test_history_rows_leave_decisions_to_the_packet(self):
+        reply = {"type": "message", "id": "d", "parentId": "r", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Kept target lazy; eager loading broke the importer."}]}}
+        self.recording(extra=[reply])
+        row = next(r for r in self.history()["results"] if r["category"] == "recorded_activity")
+        self.assertNotIn("response", row["intent"])
+        lead = next(r for r in self.compact() if r["source"] == "session")
+        self.assertNotIn("decision", lead)
+
+    def test_corrected_and_failed_work_rank_before_plain_requests(self):
+        self.recording(sid="plain", request="Add the target helper")
+        self.recording(sid="corrected", request="Make target eager",
+                       extra=[self.followup("No, revert that; it broke the loader")])
+        out = self.history()
+        first = out["results"][0]
+        self.assertEqual(first["evidence"]["session"], "corrected")
+        self.assertEqual(first["intent"]["signals"], ["possible_correction"])
+        self.assertEqual(first["intent"]["followup"]["text"], "No, revert that; it broke the loader")
+        plain = next(r for r in out["results"] if r["evidence"]["session"] == "plain")
+        self.assertEqual(plain["intent"]["signals"], [])
+        self.recording(sid="neutral", request="Tidy target", extra=[self.followup("Thanks, now write docs")])
+        neutral = next(r for r in self.history()["results"] if r["evidence"]["session"] == "neutral")
+        self.assertEqual(neutral["intent"]["signals"], [])
+
+    def test_failed_edit_is_a_signal(self):
+        path = self.recording(sid="failed")
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[3]["message"]["isError"] = True
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        row = self.history("a.py")["results"][0]
+        self.assertIn("failed_edit", row["intent"]["signals"])
+
+    def test_compact_rows_are_small_and_full_rows_keep_evidence(self):
+        self.recording(extra=[self.followup("That's not what I asked; undo it")])
+        row = self.compact()[0]
+        self.assertEqual(row["source"], "session")
+        self.assertEqual(row["text"], "Reject the eager approach")
+        self.assertEqual(row["signals"], ["possible_correction"])
+        self.assertIn("undo it", row["followup"])
+        self.assertRegex(row["ref"], r"^past@\d+#[0-9a-f]{12}$")
+        self.assertLess(len(json.dumps(row)), 400)
+        self.assertNotIn("evidence", row)
+        self.assertIn("evidence", self.history()["results"][0])
+
+    def test_symbol_pickaxe_finds_removed_callers_outside_the_file(self):
+        self.init()
+        self.write("b.py", "from a import target\nprint(target())\n")
+        self.commit("add caller")
+        (self.repo / "b.py").unlink()
+        removed = self.commit("remove caller")
+        out = self.history("a.py::target", "--no-sessions")
+        row = next(r for r in out["results"] if r["ref"] == removed)
+        self.assertEqual((row["basis"], row["pickaxe"]), ("symbol_name_pickaxe", "target"))
+        self.assertEqual([c["path"] for c in row["changes"]], ["b.py"])
+        initial = next(r for r in out["results"] if r["subject"] == "initial")
+        self.assertEqual(initial["pickaxe"], "target")
+        self.assertIn("symbol_name_pickaxe", {g.get("basis") for g in out["coverage"]["git"]})
+        self.write("a.py", "def target():\n    return 3\n")
+        self.commit("unrelated body change")
+        compact = self.compact("a.py::target", "--no-sessions")
+        self.assertEqual(compact[0]["signals"], ["pickaxe:target"])
+        self.assertEqual(compact[-1]["text"], "unrelated body change")
+        self.assertNotIn("signals", compact[-1])
+        self.assertFalse(any(g.get("basis") == "symbol_name_pickaxe" for g in self.history("a.py", "--no-sessions")["coverage"]["git"]))
+
+if __name__ == "__main__":
+    unittest.main()

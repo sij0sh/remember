@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.agents/*
+!.agents/sbd/
+.agents/sbd/*
+!.agents/sbd/design.json
+state/
+.env
+.env.*

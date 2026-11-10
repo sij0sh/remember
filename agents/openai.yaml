@@ -1,0 +1,12 @@
+interface:
+  display_name: Remember
+  short_description: Pitfalls, invariants, task state and decisions from past sessions and commits
+  default_prompt: Use $remember investigate to find pitfalls, constraints and earlier work that
+    shape the proposed change, then check each lead against current source.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

@@ -1,0 +1,414 @@
+"""Typed traversal, change impact and read-only SQL over one pinned source graph."""
+import collections
+import fnmatch
+import json
+import os
+import re
+import time
+
+from .graph_build import DEPENDENCIES
+
+
+def reference(snapshot, section, key):
+    return f"{snapshot}/{section}/{key}"
+
+
+class Graph:
+    def __init__(self, snapshot, body):
+        self.snapshot, self.body = snapshot, body
+        self.nodes = {n["id"]: n for n in body["nodes"]}
+        self.files = {n["path"]: n for n in body["nodes"] if n["kind"] == "file"}
+        self._words = None
+
+    def public(self, node):
+        return {**node, "ref": reference(self.snapshot, "nodes", node["id"])}
+
+    def resolve(self, target):
+        target = target.removeprefix("./")
+        # A returned node ref names its node directly.
+        _, marker, ident = target.rpartition("/nodes/")
+        if marker and ident in self.nodes:
+            return [ident]
+        if target in self.nodes:
+            return [target]
+        exact = [n["id"] for n in self.nodes.values() if n["key"] == target
+                 or (n["kind"] in ("file", "directory") and n.get("path") == target)
+                 or (n["kind"] == "symbol" and f"{n['path']}::{n['qualname']}" == target)]
+        if exact:
+            return exact
+        named = [n["id"] for n in self.nodes.values() if n.get("qualname") == target or n.get("name") == target]
+        if named:
+            return named
+        # A path tail ("lib.rs", "lib.rs::Type::method") matches on whole path components.
+        tail = "/" + target
+        return [n["id"] for n in self.nodes.values()
+                if (n["kind"] in ("file", "directory") and ("/" + (n.get("path") or "")).endswith(tail))
+                or (n["kind"] == "symbol" and f"/{n['path']}::{n['qualname']}".endswith(tail))]
+
+    def unique(self, target):
+        hits = self.resolve(target)
+        if len(hits) != 1:
+            raise ValueError(json.dumps({"target": target, "resolution": "ambiguous" if hits else "unresolved",
+                                         "candidates": [self.public(self.nodes[n]) for n in hits[:20]]}))
+        return hits[0]
+
+    def project(self, ident, grain):
+        n = self.nodes[ident]
+        if grain == "file" and n["kind"] == "symbol":
+            return self.files[n["path"]]["id"]
+        return ident
+
+    def seeds(self, target, grain):
+        ident = self.unique(target)
+        node = self.nodes[ident]
+        if node["kind"] == "directory":
+            prefix = "" if node["path"] == "." else node["path"] + "/"
+            return {n["id"] for n in self.files.values() if n["path"].startswith(prefix)}
+        return {self.project(ident, grain)}
+
+    def adjacency(self, direction, predicates, grain, impact=False):
+        adjacency = collections.defaultdict(list)
+        for edge in self.body["edges"]:
+            if edge["predicate"] not in predicates:
+                continue
+            a, b = (self.project(edge[k], grain) for k in ("source", "target"))
+            if a == b and grain == "file":
+                continue
+            if impact and any(self.nodes[n].get("is_test") for n in (a, b)):
+                continue
+            if direction in ("out", "both"):
+                adjacency[a].append((b, edge))
+            if direction in ("in", "both"):
+                adjacency[b].append((a, edge))
+        for values in adjacency.values():
+            values.sort(key=lambda item: (item[0], item[1]["id"]))
+        return adjacency
+
+    def walk(self, seeds, direction="in", predicates=DEPENDENCIES, grain="file", depth=2, max_nodes=1000,
+             impact=False, seconds=5.0):
+        start = time.monotonic()
+        adjacency = self.adjacency(direction, predicates, grain, impact)
+        seeds = set(seeds)
+        selected = sorted(seeds)[:max_nodes]
+        reached = {n: (0, []) for n in selected}
+        queue, frontier = collections.deque(selected), []
+        bounds = set()
+        if len(selected) < len(seeds):
+            bounds.add("nodes")
+            frontier.extend(sorted(seeds - set(selected)))
+        while queue:
+            source = queue.popleft()
+            distance, trail = reached[source]
+            # Tests can be selected/returned but never bridge unrelated implementations.
+            if self.nodes[source].get("is_test") and source not in seeds:
+                continue
+            for target, edge in adjacency[source]:
+                if time.monotonic() - start > seconds:
+                    bounds.add("time")
+                    frontier.extend([source, *queue])
+                    queue.clear()
+                    break
+                if target in reached:
+                    continue
+                if distance >= depth:
+                    bounds.add("depth")
+                    frontier.append(target)
+                    continue
+                if len(reached) >= max_nodes:
+                    bounds.add("nodes")
+                    frontier.append(target)
+                    continue
+                step = {"from": source, "to": target, "edge": reference(self.snapshot, "edges", edge["id"]),
+                        "predicate": edge["predicate"], "resolution": edge["resolution"]}
+                reached[target] = (distance + 1, trail + [step])
+                queue.append(target)
+        results = [{**self.public(self.nodes[n]), "distance": distance,
+                    "via": trail[-1]["predicate"] if trail else None, "witness": trail}
+                   for n, (distance, trail) in sorted(reached.items(), key=lambda p: (p[1][0], self.nodes[p[0]]["key"]))
+                   if n not in seeds]
+        return results, {"complete_within_predicates": not bounds, "bounds": sorted(bounds),
+                         "depth": depth, "max_nodes": max_nodes, "seconds": seconds,
+                         "frontier": [self.public(self.nodes[n]) for n in sorted(set(frontier))]}
+
+    def within(self, target):
+        """Paths a map target covers: a file, a directory's files, or a symbol's file."""
+        return {self.nodes[n]["path"] for n in self.seeds(target, "file")}
+
+    def find(self, text, word=False, case_sensitive=False, regex=False):
+        try:
+            pattern = re.compile((rf"\b(?:{text})\b" if word else text) if regex
+                                 else (rf"\b{re.escape(text)}\b" if word else re.escape(text)),
+                                 0 if case_sensitive else re.IGNORECASE)
+        except re.error as error:
+            raise ValueError(f"Invalid --regex pattern: {error}") from None
+        results = []
+        for node in self.nodes.values():
+            fields = [f for f in ("name", "key", "qualname", "path") if pattern.search(str(node.get(f) or ""))]
+            if fields:
+                results.append({**self.public(node), "match": fields})
+        for row in self.body["source"]["files"]:
+            if row["text"] is None:
+                continue
+            for number, line in enumerate(row["text"].splitlines(), 1):
+                if pattern.search(line):
+                    results.append({"kind": "occurrence", "path": row["path"], "line": number,
+                                    "text": line, "ref": reference(self.snapshot, "source", row["path"]),
+                                    "basis": "literal_match"})
+        return sorted(results, key=lambda r: (r.get("path") or "", r.get("line") or 0, r["kind"]))
+
+    def words(self):
+        """Identifier -> [(path, line)] over parsed code, import lines excluded; built once per graph."""
+        if self._words is None:
+            self._words = collections.defaultdict(list)
+            # Import statements name symbols without using them.
+            imports = {(e["evidence"]["path"], line) for e in self.body["edges"]
+                       if e["predicate"] == "IMPORTS" and e.get("evidence")
+                       for line in range(e["evidence"]["line"], e["evidence"]["end_line"] + 1)}
+            for row in self.body["source"]["files"]:
+                node = self.files.get(row["path"], {})
+                if row["text"] is None or node.get("parse_state") not in ("parsed", "parsed_with_errors"):
+                    continue
+                for number, line in enumerate(row["text"].splitlines(), 1):
+                    if (row["path"], number) in imports:
+                        continue
+                    for word in set(WORD.findall(line)):
+                        self._words[word].append((row["path"], number))
+        return self._words
+
+    def mentions(self, ident):
+        """Source lines naming a symbol outside its declaration and outside edges that reach it."""
+        node = self.nodes[ident]
+        if node["kind"] != "symbol":
+            return []
+        covered = {(e["evidence"]["path"], line) for e in self.body["edges"]
+                   if e["target"] == ident and e["predicate"] != "DECLARES" and e.get("evidence")
+                   for line in range(e["evidence"]["line"], e["evidence"]["end_line"] + 1)}
+        return [{"path": path, "line": line} for path, line in self.words().get(node["name"], [])
+                if (path, line) not in covered
+                and not (path == node["path"] and node["line"] <= line <= node["end_line"])]
+
+    def document(self, operation, results, **scope):
+        return {"operation": operation, "snapshots": [self.snapshot], "results": results,
+                "coverage": self.body["coverage"], "gaps": self.body["gaps"], "scope": scope}
+
+
+WORD = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def path_matches(path, globs):
+    """A glob matches with fnmatch (`*` crosses `/`); a plain path matches itself and everything under it."""
+    if not path:
+        return False
+    for glob in globs:
+        if any(c in glob for c in "*?["):
+            if fnmatch.fnmatchcase(path, glob):
+                return True
+        elif path == glob.rstrip("/") or path.startswith(glob.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def unresolved_mentions(graph, target, exclude_paths=()):
+    """A gap when source names a symbol target where the graph holds no edge: empty results mean unknown."""
+    hits = graph.resolve(target)
+    if len(hits) != 1:
+        return None
+    rows = [m for m in graph.mentions(hits[0]) if m["path"] not in exclude_paths]
+    if not rows:
+        return None
+    return {"area": "mentions", "reason": "unresolved_mentions", "target": target, "count": len(rows),
+            "examples": rows[:10], "meaning": "Source names this symbol where the graph has no edge; "
+            "read these lines before treating a short or empty result as complete."}
+
+
+# One file above this share of nodes skews fan-in, size and node counts.
+DOMINANT_SHARE = 0.25
+# Disk directories that never hold project source; references to them are expected.
+UNREFERENCED = {".git", ".hg", ".svn", ".remember", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache"}
+# Prose and ignore lists name directories without using them.
+QUIET = (".md", ".markdown", ".rst", ".txt", ".adoc", "ignore")
+
+
+def warnings(graph, root):
+    """Capture skews an agent would otherwise miss: a dominant file and referenced but uncaptured directories."""
+    out = []
+    counts = collections.Counter(n["path"] for n in graph.nodes.values() if n["kind"] != "directory" and n.get("path"))
+    total = sum(counts.values())
+    for path, count in counts.most_common():
+        if not total or count / total <= DOMINANT_SHARE:
+            break
+        reason = graph.files.get(path, {}).get("generated")
+        out.append({"kind": "dominant_file", "path": path, "nodes": count, "share": round(count / total, 3),
+                    **({"generated": reason} if reason else {}),
+                    "meaning": "Generated or vendored." if reason else
+                    "Counts and rankings skew toward this file; exclude it if vendored or generated."})
+    generated = sorted((p for p, n in graph.files.items() if n.get("generated")), key=lambda p: (-counts[p], p))
+    if generated:
+        out.append({"kind": "generated_files", "count": len(generated), "examples": generated[:5],
+                    "meaning": "Generated or vendored code."})
+    # Manifests name paths the capture lacks: ignored on disk, or missing outright.
+    missing = collections.defaultdict(list)
+    for gap in graph.body["gaps"]:
+        if gap.get("area") == "references":
+            missing[gap["target"]].append({"path": gap["path"], "line": gap["line"], "field": gap.get("field")})
+    for target, refs in sorted(missing.items()):
+        on_disk = os.path.exists(os.path.join(root, target))
+        out.append({"kind": "uncaptured_reference" if on_disk else "missing_reference", "path": target,
+                    "references": len(refs), "examples": refs[:5], "basis": "current disk", "source": "manifest",
+                    "meaning": ("A manifest names this ignored path; read it directly." if on_disk else
+                                "A manifest or CI file names this path, but it does not exist; the build step that "
+                                "uses it is likely broken or depends on a generator.")})
+    captured = {p.split("/", 1)[0] for p in graph.files}
+    try:
+        missing = sorted(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False)
+                         and e.name not in captured and e.name not in UNREFERENCED)
+    except OSError:
+        missing = []
+    for name in missing:
+        mention = re.compile(rf"(?<![\w.-])(?:\./)?{re.escape(name)}/")
+        refs = [{"path": row["path"], "line": number}
+                for row in graph.body["source"]["files"]
+                if row["text"] is not None and not row["path"].lower().endswith(QUIET)
+                for number, line in enumerate(row["text"].splitlines(), 1) if mention.search(line)]
+        if refs:
+            out.append({"kind": "uncaptured_reference", "path": name, "references": len(refs), "examples": refs[:5],
+                        "basis": "current disk", "meaning": "Captured files use this directory, but it is excluded "
+                        "or ignored; read it directly before judging what those files do."})
+    return out
+
+
+def evidence(graph, item):
+    result = dict(item)
+    source = item.get("evidence")
+    if source:
+        row = next((r for r in graph.body["source"]["files"] if r["path"] == source["path"]), None)
+        if row and row["text"] is not None:
+            lines = row["text"].splitlines()
+            first, last = source["line"], source["end_line"]
+            result["source"] = {**source, "text": "\n".join(lines[first-1:last]),
+                                "ref": reference(graph.snapshot, "source", row["path"])}
+    elif item.get("kind") in ("file", "symbol"):
+        result["source_ref"] = reference(graph.snapshot, "source", item["path"])
+    return result
+
+
+
+
+def symbol_users(graph, symbols):
+    """Files that name a target symbol: a call into its span, an import line or a source mention."""
+    users = set()
+    spans = [(n["path"], n["line"], n["end_line"]) for n in symbols]
+    names = {n["name"] for n in symbols}
+    texts = {r["path"]: r["text"] for r in graph.body["source"]["files"] if r["text"] is not None}
+    for edge in graph.body["edges"]:
+        if edge["predicate"] not in DEPENDENCIES:
+            continue
+        source, target = graph.nodes[edge["source"]], graph.nodes[edge["target"]]
+        if edge["predicate"] == "CALLS_STATIC" and any(
+                target.get("path") == p and a <= (target.get("line") or 0) <= b for p, a, b in spans):
+            users.add(source.get("path"))
+        elif edge["predicate"] == "IMPORTS" and target.get("path") in {p for p, _, _ in spans} and edge.get("evidence"):
+            ev = edge["evidence"]
+            lines = (texts.get(ev["path"]) or "").splitlines()[ev["line"] - 1:ev["end_line"]]
+            if names & set(WORD.findall("\n".join(lines))):
+                users.add(source.get("path"))
+    for node in symbols:
+        users.update(m["path"] for m in graph.mentions(node["id"]))
+    return users
+
+
+def reach(row, users):
+    """direct: one hop and, for a symbol target, names it; file_only: one hop to another part of the file."""
+    if row["distance"] > 1:
+        return "indirect"
+    return "direct" if users is None or row.get("path") in users else "file_only"
+
+
+def impact(graph, targets, depth=2, max_nodes=1000, seconds=5.0):
+    """Potential impact of planned edits to targets: consumers, dependencies, test candidates, risk profile."""
+    symbols, roots, widened = [], set(), []
+    for target in targets:
+        node = graph.nodes[graph.unique(target)]
+        if node["kind"] == "symbol":
+            symbols.append(node)
+            # Impact runs at file grain: every symbol in the file seeds the traversal.
+            widened.append({"target": target, "resolved": graph.public(node), "projected_to": node["path"]})
+        for ident in graph.seeds(target, "file"):
+            path = graph.nodes[ident].get("path")
+            if path not in graph.files:
+                raise ValueError(f"Impact target has no captured source file: {target}")
+            roots.add(path)
+    if not roots:
+        raise ValueError("Supply a source target")
+    results = [{"kind": "change", "state": "planned", "path": p,
+                "ref": reference(graph.snapshot, "source", p)} for p in sorted(roots)]
+    gaps = [{"area": "target", "reason": "widened_to_file", "grain": "file", **w} for w in widened]
+    seeds = {graph.files[p]["id"] for p in roots if p in graph.files}
+    reached, consumers, traversal = set(seeds), [], {}
+    for direction, role in (("in", "possible_consumer"), ("out", "dependency_context")):
+        rows, limits = graph.walk(seeds, direction=direction, depth=depth, max_nodes=max_nodes,
+                                  impact=True, seconds=seconds)
+        traversal[direction] = limits
+        if direction == "in":
+            users = symbol_users(graph, symbols) if symbols else None
+            order = {"direct": 0, "file_only": 1, "indirect": 2}
+            rows = sorted(({**r, "reach": reach(r, users)} for r in rows), key=lambda r: order[r["reach"]])
+            consumers = rows
+        results.extend({**r, "role": role} for r in rows)
+        reached.update(r["id"] for r in rows)
+        if limits["bounds"]:
+            gaps.append({"area": "traversal", "reason": "bounded", "direction": direction,
+                         "bounds": limits["bounds"], "frontier": limits["frontier"]})
+    paths = {graph.nodes[n].get("path") for n in reached}
+    for target in targets:
+        gap = unresolved_mentions(graph, target, paths)
+        if gap:
+            gaps.append(gap)
+    tests = collections.defaultdict(list)
+    for edge in graph.body["edges"]:
+        if edge["predicate"] == "TESTS" and edge["target"] in reached:
+            tests[edge["source"]].append(reference(graph.snapshot, "edges", edge["id"]))
+    for test, refs in sorted(tests.items()):
+        results.append({"kind": "verification", "test": graph.public(graph.nodes[test]),
+                        "evidence_refs": refs, "basis": "static_import_association", "execution": "not_run"})
+    public = [graph.public(n) for n in graph.nodes.values() if n.get("public_candidate") and n.get("path") in paths]
+    tally = collections.Counter(r["reach"] for r in consumers)
+    results.append({"kind": "risk_profile", "possible_consumers": len(consumers),
+                    "direct_consumers": tally["direct"], "file_only_consumers": tally["file_only"],
+                    "indirect_consumers": tally["indirect"],
+                    "test_candidates": len(tests), "public_symbol_candidates": public,
+                    "unknowns_in_reached_files": sum(g.get("path") in paths for g in graph.body["gaps"]),
+                    "external_consumers": "unknown", "behavioral_effect": "not_verified",
+                    "design_fit": "requires requirements, ownership and lifecycle interpretation"})
+    gaps.extend(graph.body["gaps"])
+    return {"operation": "impact", "snapshots": [graph.snapshot], "results": results, "gaps": gaps,
+            "scope": {"mode": "planned", "grain": "file", "traversal": traversal, "targets": list(targets),
+                      "widened_targets": widened, "assessment": "potential impact, not verified breakage"},
+            "coverage": graph.body["coverage"]}
+
+
+TABLES = {
+    "nodes": {"id": "TEXT", "kind": "TEXT", "key": "TEXT", "path": "TEXT", "name": "TEXT", "qualname": "TEXT",
+              "line": "INTEGER", "end_line": "INTEGER", "symbol_kind": "TEXT", "language": "TEXT", "is_test": "INTEGER", "ref": "TEXT"},
+    "edges": {"id": "TEXT", "source": "TEXT", "predicate": "TEXT", "target": "TEXT", "resolution": "TEXT",
+              "rule": "TEXT", "evidence": "TEXT", "type_only": "INTEGER", "ref": "TEXT"},
+    "gaps": {"area": "TEXT", "reason": "TEXT", "path": "TEXT", "line": "INTEGER", "predicate": "TEXT", "text": "TEXT",
+             "rule": "TEXT", "bindings": "INTEGER", "calls": "INTEGER", "language": "TEXT", "error": "TEXT",
+             "candidates": "TEXT"},
+    "files": {"path": "TEXT", "digest": "TEXT", "state": "TEXT", "size": "INTEGER", "ref": "TEXT"},
+}
+
+
+def inputs(graph):
+    """Canonical graph tables for the runtime catalog and SQL providers."""
+    from .engine import Input
+    sources = {
+        "nodes": [graph.public(n) for n in graph.body["nodes"]],
+        "edges": [{**e, "type_only": int(bool(e.get("type_only"))), "ref": reference(graph.snapshot, "edges", e["id"])}
+                  for e in graph.body["edges"]],
+        "gaps": [{**g, "calls": g.get("calls", 1)} if g["area"] == "calls" else g for g in graph.body["gaps"]],
+        "files": [{**r, "ref": reference(graph.snapshot, "source", r["path"])} for r in graph.body["source"]["files"]],
+    }
+    return [Input(name, rows, {}, list(TABLES[name]), TABLES[name], "one " + name.rstrip("s"))
+            for name, rows in sources.items()]
+

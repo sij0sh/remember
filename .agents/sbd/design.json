@@ -1,0 +1,799 @@
+{
+  "workflow": "design",
+  "runs": [
+    {
+      "id": 1,
+      "hash": "7aca218f9e57",
+      "status": "done",
+      "started": "2026-11-10T14:45:52+00:00",
+      "updated": "2026-11-10T15:07:25+00:00",
+      "steps": {
+        "ground": {
+          "status": "done",
+          "attempts": 1,
+          "result": {
+            "request": "Explore pi-shadow-compact, claude-shadow-compact and standard compaction outputs as normalization inputs for Remember; inspect real examples and recommend selective use.",
+            "goal": "Evidence-backed report, relational claim schema and deterministic source-selection design; no implementation.",
+            "constraints": [
+              "Remember remains invocation-local, evidence-first; summaries remain attributed claims, not tool outcomes or user instructions",
+              "No source edits or commits; generated artifacts under .agents/artifacts/",
+              "Inspect installed/recorded schema versions, not only current source",
+              "Preserve branch, coverage, missing evidence and provenance"
+            ],
+            "criteria": [
+              "Actual examples from both plugins and native Pi/Claude compaction with reproducible file/record refs",
+              "Explicit mapping to current Remember code and gaps",
+              "Minimal table design plus extraction and native/shadow/both selection rules",
+              "Limits, test cases and phased recommendations"
+            ],
+            "prior_decisions": [],
+            "memory_scan": "Bounded investigate found only current user request; no earlier pitfalls/invariants/decisions in scanned scope. CWD has no .git; history not available here."
+          },
+          "feedback": []
+        },
+        "branch": {
+          "status": "done",
+          "attempts": 2,
+          "result": {
+            "questions": [
+              {
+                "id": "D1",
+                "question": "What counts as a compaction artifact and authoritative provenance across Pi custom entries, hook/native compactions and Claude diagnostics/transcripts?",
+                "after": []
+              },
+              {
+                "id": "D2",
+                "question": "What is the smallest invocation-local relational representation preserving useful claims, citations and coverage without duplicating observations?",
+                "after": [
+                  "D1"
+                ]
+              },
+              {
+                "id": "D3",
+                "question": "How should deterministic code parse known structured/rendered/native variants and preserve unsupported or ambiguous material?",
+                "after": [
+                  "D1",
+                  "D2"
+                ]
+              },
+              {
+                "id": "D4",
+                "question": "When should Remember retrieve Shadow, standard compaction, or both, and how should existing investigate/trace consume them?",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3"
+                ]
+              },
+              {
+                "id": "D5",
+                "question": "Which findings are demonstrated by actual local samples, and what evaluation or missing evidence blocks implementation?",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3",
+                  "D4"
+                ]
+              },
+              {
+                "id": "D6",
+                "question": "What mechanical equivalence and uncertainty rules make non-twin selection deterministic without fuzzy semantic dedup or automatic conflict resolution?",
+                "after": [
+                  "D3",
+                  "D4"
+                ]
+              },
+              {
+                "id": "D7",
+                "question": "How does accepted/prepared/unknown/confirmed installation lifecycle affect retrieval eligibility and current-state preference?",
+                "after": [
+                  "D1",
+                  "D4"
+                ]
+              }
+            ]
+          },
+          "feedback": [],
+          "previous": {
+            "questions": [
+              {
+                "id": "D1",
+                "question": "What counts as a compaction artifact and authoritative provenance across Pi custom entries, hook/native compactions and Claude diagnostics/transcripts?",
+                "after": []
+              },
+              {
+                "id": "D2",
+                "question": "What is the smallest invocation-local relational representation preserving useful claims, citations and coverage without duplicating observations?",
+                "after": [
+                  "D1"
+                ]
+              },
+              {
+                "id": "D3",
+                "question": "How should deterministic code parse known structured/rendered/native variants and preserve unsupported or ambiguous material?",
+                "after": [
+                  "D1",
+                  "D2"
+                ]
+              },
+              {
+                "id": "D4",
+                "question": "When should Remember retrieve Shadow, standard compaction, or both, and how should existing investigate/trace consume them?",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3"
+                ]
+              },
+              {
+                "id": "D5",
+                "question": "Which findings are demonstrated by actual local samples, and what evaluation or missing evidence blocks implementation?",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3",
+                  "D4"
+                ]
+              }
+            ]
+          }
+        },
+        "decide": {
+          "status": "done",
+          "attempts": 2,
+          "result": {
+            "goal": "Investigate and propose compaction-output normalization for Remember; report-only",
+            "constraints": [
+              "Invocation-local evidence-first data; no production implementation",
+              "Summaries remain attributed claims; original outcomes/authority are separate",
+              "Preserve physical provenance, branch, coverage and missing-data states"
+            ],
+            "criteria": [
+              "Real Pi Shadow and Pi/Claude standard samples plus explicitly controlled Claude Shadow format example",
+              "Reproducible corpus/probe measurements and current Remember comparison",
+              "Minimal relational model, parsing contracts and deterministic selection rules",
+              "Explicit live-Claude evidence gate, implementation gate and acceptance tests"
+            ],
+            "decisions": [
+              {
+                "id": "D1",
+                "question": "What constitutes a compaction input and its provenance?",
+                "answer": "Recognize physical containers, then separately classify representation and producer. Include Pi custom and compaction variants and Claude summary/boundary; permit explicitly configured Claude diagnostic roots. Preserve lifecycle and coverage separately; fromHook or a heading alone does not prove Shadow provenance.",
+                "after": [],
+                "rationale": "Observed 29 custom checkpoints, 23 Shadow compaction occurrences, 9 native-format hook compactions and 5 Claude summary/boundary pairs. Five Shadow compactions lack a structured twin.",
+                "alternatives": [
+                  {
+                    "option": "Only parse custom JSON",
+                    "rejected_because": "Drops five observed compaction-only Shadow inputs and native task state"
+                  },
+                  {
+                    "option": "Infer producer from fromHook or heading anywhere",
+                    "rejected_because": "All nine standard-format Pi records are fromHook=true; quoted headings are not containers"
+                  }
+                ],
+                "tradeoff": "More container variants, but no speculative authentication or broad diagnostic crawling",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/measurements.json",
+                    "kind": "observed",
+                    "shows": "Corpus variants and missing twins"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/pi-shadow-compact/src/native-compaction.ts:27-90",
+                    "kind": "observed",
+                    "shows": "Wrapped native summarizer can return an extension compaction"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/claude-shadow-compact/hooks/register.ts:403-405,508-534",
+                    "kind": "observed",
+                    "shows": "Per-generation diagnostic paths"
+                  }
+                ],
+                "revisit": "New host/plugin schema or a live artifact contradicts detection assumptions"
+              },
+              {
+                "id": "D2",
+                "question": "What minimal relational representation preserves useful information?",
+                "answer": "Propose three transient tables: summaries (physical occurrences, separate acceptance/verifier/installation statuses, and scope), summary_items (exact section/item/subfield/block claims), summary_refs (snapshot-namespaced citations and resolution). One decoder owns parsing; retain compatible events/checkpoints. Exact session/producer identity plus compatible coverage/content groups proven twins without deleting occurrences; D6 defines non-twins.",
+                "after": [
+                  "D1"
+                ],
+                "rationale": "Real checkpoints carry typed uncertainty, rationale and citations that current claim strings flatten; separate grains prevent citation fanout and duplicate observations.",
+                "alternatives": [
+                  {
+                    "option": "Single global latest-state or persistent memory table",
+                    "rejected_because": "Loses provenance/coverage and conflicts with invocation-local evidence-first design"
+                  },
+                  {
+                    "option": "One row per entire summary JSON",
+                    "rejected_because": "Already largely available; does not expose section/status/ref retrieval"
+                  }
+                ],
+                "tradeoff": "Three explicit grains instead of one broad row; no semantic atomization of arbitrary native prose",
+                "evidence": [
+                  {
+                    "ref": "README.md",
+                    "kind": "documented",
+                    "shows": "Invocation-local SQLite, claims distinct from outcomes"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/pi-shadow-items.csv",
+                    "kind": "observed",
+                    "shows": "1805 exact research item/subfield rows, including 277 verification claims"
+                  },
+                  {
+                    "ref": "scripts/helper/reconciliation.py:190-230",
+                    "kind": "observed",
+                    "shows": "Current dictionary serialization and clipping"
+                  }
+                ],
+                "revisit": "A replay shows table grain cannot retain an observed field or compatibility would require duplicate authoritative state"
+              },
+              {
+                "id": "D3",
+                "question": "How should deterministic parsing and evidence resolution work?",
+                "answer": "Decode known structured versions first; parse rendering only within recognized containers, with fence-aware section/block handling. Preserve native split-turn scope, wrappers, unknown sections and partial states. Resolve Pi labels against the exact prepared branch and Claude labels against its diagnostic snapshot; E0000 is prior summary. Never infer missing references.",
+                "after": [
+                  "D1",
+                  "D2"
+                ],
+                "rationale": "Observed Pi renderer drops citations; Claude preserves them. Real Pi standard sample has different history and split-turn requests. Pi branch-position citations were resolved to original failure/fix tool records.",
+                "alternatives": [
+                  {
+                    "option": "Generic heading regex or LLM normalization",
+                    "rejected_because": "Would blur nested/split scope and cannot restore missing producer evidence maps"
+                  }
+                ],
+                "tradeoff": "Unknown native variants stay opaque/partial instead of guessed semantics",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/pi-native-format-sample.txt",
+                    "kind": "observed",
+                    "shows": "History goal plus separate split-turn Original Request"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/measurements.json",
+                    "kind": "observed",
+                    "shows": "E0230/E0234 map to original failed/passing tool records"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/pi-shadow-compact/src/summary.ts:295-318",
+                    "kind": "observed",
+                    "shows": "Rendering strips evidenceRefs"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/claude-shadow-compact/hooks/checkpoint.ts:223-250",
+                    "kind": "observed",
+                    "shows": "Rendering includes coverage and citation suffixes"
+                  }
+                ],
+                "revisit": "Corpus variants defeat conservative section/snapshot recognition"
+              },
+              {
+                "id": "D4",
+                "question": "When should Remember select Shadow, native, or both?",
+                "answer": "Select per query/branch/coverage and proven representation group. Prefer JSON only for consistent, proven twins; use native alone when available alone. Preserve non-twins for complementary or incomparable scopes, possible alternatives, and older rationale/uncertainty; no semantic equivalence or contradiction classifier is implied (D6). Canonical-install evidence controls current-summary preference (D7). Inspect uncovered/retained tail for current-state requests. Raw outcomes and original human authority are never replaceable by summary claims.",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3"
+                ],
+                "rationale": "Shadow brand does not establish accuracy. A later summary may be current while older structured rationale remains useful; absence in a summary does not resolve an obligation. Revised after independent challenge to specify equivalence and lifecycle in D6/D7.",
+                "alternatives": [
+                  {
+                    "option": "Always prefer Shadow",
+                    "rejected_because": "Coverage/freshness can differ; rendered-only Shadow can be poorer than native"
+                  },
+                  {
+                    "option": "Always concatenate both",
+                    "rejected_because": "Duplicates twins, mixes scope and floods leads"
+                  },
+                  {
+                    "option": "Numerical trust scores and automatic semantic merge",
+                    "rejected_because": "No measured evidence for calibrated accuracy or safe conflict resolution"
+                  }
+                ],
+                "tradeoff": "Explainable reason codes and occasional dual-source output instead of automatic truth selection",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/claude-native-sample.txt",
+                    "kind": "observed",
+                    "shows": "Retained tail unseen by summarizer can supersede summary state"
+                  },
+                  {
+                    "ref": "scripts/helper/reconciliation.py:234-265",
+                    "kind": "observed",
+                    "shows": "Existing scope-aware comparisons distinguish observations and claims"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/report.md",
+                    "kind": "inferred",
+                    "shows": "Conservative selection policy derived from available formats, not evaluated quality ranking"
+                  }
+                ],
+                "revisit": "Task-level evaluation establishes a simpler equally safe selection policy"
+              },
+              {
+                "id": "D5",
+                "question": "What evidence and approvals remain before implementation?",
+                "answer": "Live Claude Shadow ingestion is not validated. Require an accepted checkpoint with matching source snapshot, role acceptance and canonical install evidence; current controlled renderer execution validates format only. User must separately choose implementation scope. Proposed rollout: Pi structured items, Pi render/native plus Claude standard, then evidence-gated Claude diagnostics and retrieval integration.",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3",
+                  "D4"
+                ],
+                "status": "open",
+                "kind": "awaiting-evidence",
+                "needs": "One real accepted Claude Shadow artifact set and explicit user implementation scope; fixture/evaluation results before adopting quality claims",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/claude-shadow-controlled.json",
+                    "kind": "observed",
+                    "shows": "Production renderer executed on repository fixture, not live checkpoint"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/inventory.json",
+                    "kind": "unknown",
+                    "shows": "No live Claude Shadow artifacts in searched local roots; missing/deleted data not proof of runtime failure"
+                  },
+                  {
+                    "ref": "user",
+                    "kind": "documented",
+                    "shows": "Exploration requested, implementation not requested"
+                  }
+                ],
+                "alternatives": [
+                  {
+                    "option": "Claim live Claude validation from test fixture or native summary in plugin repo",
+                    "rejected_because": "Would misrepresent evidence"
+                  }
+                ],
+                "tradeoff": "Claude diagnostic adapter remains a proposal with explicit evidence gap",
+                "revisit": "Real accepted Claude artifact set supplied and implementation requested"
+              },
+              {
+                "id": "D6",
+                "question": "What mechanical rules make non-twin selection deterministic without fuzzy semantic equivalence or conflict resolution?",
+                "answer": "Dedup delivery only for proven same-session/producer-ID twins with compatible known coverage and consistent recognized text/status. Same-ID content mismatch retains both with representation_mismatch. Non-twins remain distinct, including identical text; differing text/status yields comparison=unresolved, not a proven contradiction. For current continuation, prefer latest comparable on-branch evidence endpoint among canonically installed sources; equal/incomparable/unknown endpoints preserve alternatives. Stable source-ref/item order resolves delivery ties; clipping reports counts/continuations, not supersession.",
+                "after": [
+                  "D3",
+                  "D4"
+                ],
+                "rationale": "Conservative proposal removes an unvalidated semantic equivalence dependency and preserves snapshot provenance. Simplicity choice, not measured retrieval superiority.",
+                "alternatives": [
+                  {
+                    "option": "Suppress semantically similar non-twins or classify contradictions",
+                    "rejected_because": "Requires unvalidated semantic identity/conflict decisions outside this investigation"
+                  },
+                  {
+                    "option": "Wall-clock latest wins for incomparable coverage",
+                    "rejected_because": "Publication can lag preparation and branches/retained tails differ"
+                  }
+                ],
+                "tradeoff": "More alternate leads and less dedup in return for deterministic inspectable provenance",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/challenge.json",
+                    "kind": "observed",
+                    "shows": "Independent review identified missing equivalence rule"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/measurements.json",
+                    "kind": "observed",
+                    "shows": "Distinct representations, positional coverage and publication points, not semantic equivalence"
+                  },
+                  {
+                    "ref": "D2",
+                    "kind": "documented",
+                    "shows": "Preserve physical occurrence provenance"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/report.md#mechanical-comparison-and-lifecycle-eligibility",
+                    "kind": "inferred",
+                    "shows": "Conservative policy proposal; no quality calibration claimed"
+                  }
+                ],
+                "revisit": "Replay evaluation establishes a simpler safe dedup rule or explicitly justifies scoped semantic identity"
+              },
+              {
+                "id": "D7",
+                "question": "How does lifecycle affect retrieval eligibility and current-summary preference?",
+                "answer": "Canonical host compaction or matching authoritative confirmation permits on-branch current-summary preference, not claim truth. Accepted/prepared/custom-only/attempted-but-unconfirmed summaries remain contextual/historical and cannot displace a confirmed current summary; if alone, report unconfirmed preparation rather than installed current state. Recognized Pi custom publication with acceptance unknown may remain contextual with unknown lifecycle. Unaccepted/rejected/arbitrary worker drafts are diagnostic-only, excluded from ordinary task/current-state leads. Preserve acceptance, verifier and installation evidence independently.",
+                "after": [
+                  "D1",
+                  "D4"
+                ],
+                "rationale": "Preparation/publication and canonical installation are distinct source events. Conservative eligibility avoids silently promoting prepared results to canonical state; proposed policy, not evaluated superiority.",
+                "alternatives": [
+                  {
+                    "option": "Any accepted/latest prepared checkpoint replaces installed summary",
+                    "rejected_because": "Acceptance does not establish canonical installation or current state"
+                  },
+                  {
+                    "option": "Discard every uninstalled/unknown custom source",
+                    "rejected_because": "Loses useful attributed rationale/uncertainty and existing custom-only Remember leads"
+                  }
+                ],
+                "tradeoff": "Additional labeled contextual leads while canonical-install evidence controls resume preference",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/challenge.json",
+                    "kind": "observed",
+                    "shows": "Independent review identified lifecycle eligibility gap"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/pi-shadow-compact/src/index.ts",
+                    "kind": "observed",
+                    "shows": "Custom persistence and canonical compaction observation are separate paths"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/claude-shadow-compact/hooks/register.ts",
+                    "kind": "observed",
+                    "shows": "Diagnostics, role acceptance and canonical outcomes are separate"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/report.md#mechanical-comparison-and-lifecycle-eligibility",
+                    "kind": "inferred",
+                    "shows": "Conservative proposed eligibility; no inferred task success"
+                  }
+                ],
+                "revisit": "Accepted/custom-only versus canonically installed replay shows a simpler rule preserving authority and useful retrieval"
+              }
+            ]
+          },
+          "feedback": [],
+          "previous": {
+            "goal": "Investigate and propose compaction-output normalization for Remember; report-only",
+            "constraints": [
+              "Invocation-local evidence-first data; no production implementation",
+              "Summaries remain attributed claims; original outcomes/authority are separate",
+              "Preserve physical provenance, branch, coverage and missing-data states"
+            ],
+            "criteria": [
+              "Real Pi Shadow and Pi/Claude standard samples plus explicitly controlled Claude Shadow format example",
+              "Reproducible corpus/probe measurements and current Remember comparison",
+              "Minimal relational model, parsing contracts and deterministic selection rules",
+              "Explicit live-Claude evidence gate, implementation gate and acceptance tests"
+            ],
+            "decisions": [
+              {
+                "id": "D1",
+                "question": "What constitutes a compaction input and its provenance?",
+                "answer": "Recognize physical containers, then separately classify representation and producer. Include Pi custom and compaction variants and Claude summary/boundary; permit explicitly configured Claude diagnostic roots. Preserve lifecycle and coverage separately; fromHook or a heading alone does not prove Shadow provenance.",
+                "after": [],
+                "rationale": "Observed 29 custom checkpoints, 23 Shadow compaction occurrences, 9 native-format hook compactions and 5 Claude summary/boundary pairs. Five Shadow compactions lack a structured twin.",
+                "alternatives": [
+                  {
+                    "option": "Only parse custom JSON",
+                    "rejected_because": "Drops five observed compaction-only Shadow inputs and native task state"
+                  },
+                  {
+                    "option": "Infer producer from fromHook or heading anywhere",
+                    "rejected_because": "All nine standard-format Pi records are fromHook=true; quoted headings are not containers"
+                  }
+                ],
+                "tradeoff": "More container variants, but no speculative authentication or broad diagnostic crawling",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/measurements.json",
+                    "kind": "observed",
+                    "shows": "Corpus variants and missing twins"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/pi-shadow-compact/src/native-compaction.ts:27-90",
+                    "kind": "observed",
+                    "shows": "Wrapped native summarizer can return an extension compaction"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/claude-shadow-compact/hooks/register.ts:403-405,508-534",
+                    "kind": "observed",
+                    "shows": "Per-generation diagnostic paths"
+                  }
+                ],
+                "revisit": "New host/plugin schema or a live artifact contradicts detection assumptions"
+              },
+              {
+                "id": "D2",
+                "question": "What minimal relational representation preserves useful information?",
+                "answer": "Propose three transient tables: summaries (physical occurrences and scope), summary_items (exact section/item/subfield/block claims), summary_refs (snapshot-namespaced citations and resolution). One decoder owns parsing; retain compatible existing events/checkpoints. Exact producer identity groups twins for retrieval without deleting occurrences.",
+                "after": [
+                  "D1"
+                ],
+                "rationale": "Real checkpoints carry typed uncertainty, rationale and citations that current claim strings flatten; separate grains prevent citation fanout and duplicate observations.",
+                "alternatives": [
+                  {
+                    "option": "Single global latest-state or persistent memory table",
+                    "rejected_because": "Loses provenance/coverage and conflicts with invocation-local evidence-first design"
+                  },
+                  {
+                    "option": "One row per entire summary JSON",
+                    "rejected_because": "Already largely available; does not expose section/status/ref retrieval"
+                  }
+                ],
+                "tradeoff": "Three explicit grains instead of one broad row; no semantic atomization of arbitrary native prose",
+                "evidence": [
+                  {
+                    "ref": "README.md",
+                    "kind": "documented",
+                    "shows": "Invocation-local SQLite, claims distinct from outcomes"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/pi-shadow-items.csv",
+                    "kind": "observed",
+                    "shows": "1805 exact research item/subfield rows, including 277 verification claims"
+                  },
+                  {
+                    "ref": "scripts/helper/reconciliation.py:190-230",
+                    "kind": "observed",
+                    "shows": "Current dictionary serialization and clipping"
+                  }
+                ],
+                "revisit": "A replay shows table grain cannot retain an observed field or compatibility would require duplicate authoritative state"
+              },
+              {
+                "id": "D3",
+                "question": "How should deterministic parsing and evidence resolution work?",
+                "answer": "Decode known structured versions first; parse rendering only within recognized containers, with fence-aware section/block handling. Preserve native split-turn scope, wrappers, unknown sections and partial states. Resolve Pi labels against the exact prepared branch and Claude labels against its diagnostic snapshot; E0000 is prior summary. Never infer missing references.",
+                "after": [
+                  "D1",
+                  "D2"
+                ],
+                "rationale": "Observed Pi renderer drops citations; Claude preserves them. Real Pi standard sample has different history and split-turn requests. Pi branch-position citations were resolved to original failure/fix tool records.",
+                "alternatives": [
+                  {
+                    "option": "Generic heading regex or LLM normalization",
+                    "rejected_because": "Would blur nested/split scope and cannot restore missing producer evidence maps"
+                  }
+                ],
+                "tradeoff": "Unknown native variants stay opaque/partial instead of guessed semantics",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/pi-native-format-sample.txt",
+                    "kind": "observed",
+                    "shows": "History goal plus separate split-turn Original Request"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/measurements.json",
+                    "kind": "observed",
+                    "shows": "E0230/E0234 map to original failed/passing tool records"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/pi-shadow-compact/src/summary.ts:295-318",
+                    "kind": "observed",
+                    "shows": "Rendering strips evidenceRefs"
+                  },
+                  {
+                    "ref": "/home/joshsimon/Projects/pi-extensions/claude-shadow-compact/hooks/checkpoint.ts:223-250",
+                    "kind": "observed",
+                    "shows": "Rendering includes coverage and citation suffixes"
+                  }
+                ],
+                "revisit": "Corpus variants defeat conservative section/snapshot recognition"
+              },
+              {
+                "id": "D4",
+                "question": "When should Remember select Shadow, native, or both?",
+                "answer": "Select per query/branch/coverage and proven representation group. Prefer JSON for the same checkpoint; use native alone when available alone; use both for complementary ranges, relevant older rationale/uncertainty, or disagreement. Inspect uncovered/retained tail for current-state requests. Raw outcomes and original human authority never become replaceable by summary claims.",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3"
+                ],
+                "rationale": "Shadow brand does not establish accuracy. A later summary may be current while older structured rationale remains useful; absence in a summary does not resolve an obligation.",
+                "alternatives": [
+                  {
+                    "option": "Always prefer Shadow",
+                    "rejected_because": "Coverage/freshness can differ; rendered-only Shadow can be poorer than native"
+                  },
+                  {
+                    "option": "Always concatenate both",
+                    "rejected_because": "Duplicates twins, mixes scope and floods leads"
+                  },
+                  {
+                    "option": "Numerical trust scores and automatic semantic merge",
+                    "rejected_because": "No measured evidence for calibrated accuracy or safe conflict resolution"
+                  }
+                ],
+                "tradeoff": "Explainable reason codes and occasional dual-source output instead of automatic truth selection",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/claude-native-sample.txt",
+                    "kind": "observed",
+                    "shows": "Retained tail unseen by summarizer can supersede summary state"
+                  },
+                  {
+                    "ref": "scripts/helper/reconciliation.py:234-265",
+                    "kind": "observed",
+                    "shows": "Existing scope-aware comparisons distinguish observations and claims"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/report.md",
+                    "kind": "inferred",
+                    "shows": "Conservative selection policy derived from available formats, not evaluated quality ranking"
+                  }
+                ],
+                "revisit": "Task-level evaluation establishes a simpler equally safe selection policy"
+              },
+              {
+                "id": "D5",
+                "question": "What evidence and approvals remain before implementation?",
+                "answer": "Live Claude Shadow ingestion is not validated. Require an accepted checkpoint with matching source snapshot, role acceptance and canonical install evidence; current controlled renderer execution validates format only. User must separately choose implementation scope. Proposed rollout: Pi structured items, Pi render/native plus Claude standard, then evidence-gated Claude diagnostics and retrieval integration.",
+                "after": [
+                  "D1",
+                  "D2",
+                  "D3",
+                  "D4"
+                ],
+                "status": "open",
+                "kind": "awaiting-evidence",
+                "needs": "One real accepted Claude Shadow artifact set and explicit user implementation scope; fixture/evaluation results before adopting quality claims",
+                "evidence": [
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/claude-shadow-controlled.json",
+                    "kind": "observed",
+                    "shows": "Production renderer executed on repository fixture, not live checkpoint"
+                  },
+                  {
+                    "ref": ".agents/artifacts/compaction-investigation/inventory.json",
+                    "kind": "unknown",
+                    "shows": "No live Claude Shadow artifacts in searched local roots; missing/deleted data not proof of runtime failure"
+                  },
+                  {
+                    "ref": "user",
+                    "kind": "documented",
+                    "shows": "Exploration requested, implementation not requested"
+                  }
+                ],
+                "alternatives": [
+                  {
+                    "option": "Claim live Claude validation from test fixture or native summary in plugin repo",
+                    "rejected_because": "Would misrepresent evidence"
+                  }
+                ],
+                "tradeoff": "Claude diagnostic adapter remains a proposal with explicit evidence gap",
+                "revisit": "Real accepted Claude artifact set supplied and implementation requested"
+              }
+            ]
+          }
+        },
+        "challenge": {
+          "status": "done",
+          "attempts": 2,
+          "result": {
+            "gaps": [],
+            "review_artifact": ".agents/artifacts/compaction-investigation/challenge-round2.json",
+            "factual_issues": [],
+            "resolution": "Independent round-2 review found D6/D7 close non-twin equivalence and lifecycle eligibility gaps; no material report-level omissions. Review did not replay audit or verify every transcript."
+          },
+          "feedback": [
+            {
+              "attempt": 1,
+              "result": {
+                "gaps": [
+                  {
+                    "question": "What conservative rule makes non-twin source selection deterministic without fuzzy semantic equivalence or conflict resolution? Preserve separate claims unless equivalence is established mechanically; specify uncertain comparisons.",
+                    "after": [
+                      "D3",
+                      "D4"
+                    ]
+                  },
+                  {
+                    "question": "How does lifecycle affect eligibility/current-state preference for accepted custom-only or diagnostic checkpoints with unknown installation evidence, versus installed summaries?",
+                    "after": [
+                      "D1",
+                      "D4"
+                    ]
+                  }
+                ],
+                "review_artifact": ".agents/artifacts/compaction-investigation/challenge.json",
+                "factual_issues": []
+              },
+              "reasons": [
+                "agent: condition not met"
+              ]
+            }
+          ],
+          "previous": {
+            "gaps": [
+              {
+                "question": "What conservative rule makes non-twin source selection deterministic without fuzzy semantic equivalence or conflict resolution? Preserve separate claims unless equivalence is established mechanically; specify uncertain comparisons.",
+                "after": [
+                  "D3",
+                  "D4"
+                ]
+              },
+              {
+                "question": "How does lifecycle affect eligibility/current-state preference for accepted custom-only or diagnostic checkpoints with unknown installation evidence, versus installed summaries?",
+                "after": [
+                  "D1",
+                  "D4"
+                ]
+              }
+            ],
+            "review_artifact": ".agents/artifacts/compaction-investigation/challenge.json",
+            "factual_issues": []
+          }
+        },
+        "summary": {
+          "status": "done",
+          "attempts": 1,
+          "result": {
+            "current": [
+              {
+                "id": "D1",
+                "question": "What constitutes a compaction input and its provenance?",
+                "answer": "Recognize physical containers, then separately classify representation and producer. Include Pi custom and compaction variants and Claude summary/boundary; permit explicitly configured Claude diagnostic roots. Preserve lifecycle and coverage separately; fromHook or a heading alone does not prove Shadow provenance.",
+                "tradeoff": "More container variants, but no speculative authentication or broad diagnostic crawling",
+                "revisit": "New host/plugin schema or a live artifact contradicts detection assumptions",
+                "status": "adopted",
+                "basis": "established"
+              },
+              {
+                "id": "D2",
+                "question": "What minimal relational representation preserves useful information?",
+                "answer": "Propose three transient tables: summaries (physical occurrences, separate acceptance/verifier/installation statuses, and scope), summary_items (exact section/item/subfield/block claims), summary_refs (snapshot-namespaced citations and resolution). One decoder owns parsing; retain compatible events/checkpoints. Exact session/producer identity plus compatible coverage/content groups proven twins without deleting occurrences; D6 defines non-twins.",
+                "tradeoff": "Three explicit grains instead of one broad row; no semantic atomization of arbitrary native prose",
+                "revisit": "A replay shows table grain cannot retain an observed field or compatibility would require duplicate authoritative state",
+                "status": "adopted",
+                "basis": "established"
+              },
+              {
+                "id": "D3",
+                "question": "How should deterministic parsing and evidence resolution work?",
+                "answer": "Decode known structured versions first; parse rendering only within recognized containers, with fence-aware section/block handling. Preserve native split-turn scope, wrappers, unknown sections and partial states. Resolve Pi labels against the exact prepared branch and Claude labels against its diagnostic snapshot; E0000 is prior summary. Never infer missing references.",
+                "tradeoff": "Unknown native variants stay opaque/partial instead of guessed semantics",
+                "revisit": "Corpus variants defeat conservative section/snapshot recognition",
+                "status": "adopted",
+                "basis": "established"
+              },
+              {
+                "id": "D4",
+                "question": "When should Remember select Shadow, native, or both?",
+                "answer": "Select per query/branch/coverage and proven representation group. Prefer JSON only for consistent, proven twins; use native alone when available alone. Preserve non-twins for complementary or incomparable scopes, possible alternatives, and older rationale/uncertainty; no semantic equivalence or contradiction classifier is implied (D6). Canonical-install evidence controls current-summary preference (D7). Inspect uncovered/retained tail for current-state requests. Raw outcomes and original human authority are never replaceable by summary claims.",
+                "tradeoff": "Explainable reason codes and occasional dual-source output instead of automatic truth selection",
+                "revisit": "Task-level evaluation establishes a simpler equally safe selection policy",
+                "status": "adopted",
+                "basis": "established"
+              },
+              {
+                "id": "D5",
+                "question": "What evidence and approvals remain before implementation?",
+                "answer": "Live Claude Shadow ingestion is not validated. Require an accepted checkpoint with matching source snapshot, role acceptance and canonical install evidence; current controlled renderer execution validates format only. User must separately choose implementation scope. Proposed rollout: Pi structured items, Pi render/native plus Claude standard, then evidence-gated Claude diagnostics and retrieval integration.",
+                "kind": "awaiting-evidence",
+                "needs": "One real accepted Claude Shadow artifact set and explicit user implementation scope; fixture/evaluation results before adopting quality claims",
+                "tradeoff": "Claude diagnostic adapter remains a proposal with explicit evidence gap",
+                "revisit": "Real accepted Claude artifact set supplied and implementation requested",
+                "status": "open",
+                "basis": "established"
+              },
+              {
+                "id": "D6",
+                "question": "What mechanical rules make non-twin selection deterministic without fuzzy semantic equivalence or conflict resolution?",
+                "answer": "Dedup delivery only for proven same-session/producer-ID twins with compatible known coverage and consistent recognized text/status. Same-ID content mismatch retains both with representation_mismatch. Non-twins remain distinct, including identical text; differing text/status yields comparison=unresolved, not a proven contradiction. For current continuation, prefer latest comparable on-branch evidence endpoint among canonically installed sources; equal/incomparable/unknown endpoints preserve alternatives. Stable source-ref/item order resolves delivery ties; clipping reports counts/continuations, not supersession.",
+                "tradeoff": "More alternate leads and less dedup in return for deterministic inspectable provenance",
+                "revisit": "Replay evaluation establishes a simpler safe dedup rule or explicitly justifies scoped semantic identity",
+                "status": "adopted",
+                "basis": "established"
+              },
+              {
+                "id": "D7",
+                "question": "How does lifecycle affect retrieval eligibility and current-summary preference?",
+                "answer": "Canonical host compaction or matching authoritative confirmation permits on-branch current-summary preference, not claim truth. Accepted/prepared/custom-only/attempted-but-unconfirmed summaries remain contextual/historical and cannot displace a confirmed current summary; if alone, report unconfirmed preparation rather than installed current state. Recognized Pi custom publication with acceptance unknown may remain contextual with unknown lifecycle. Unaccepted/rejected/arbitrary worker drafts are diagnostic-only, excluded from ordinary task/current-state leads. Preserve acceptance, verifier and installation evidence independently.",
+                "tradeoff": "Additional labeled contextual leads while canonical-install evidence controls resume preference",
+                "revisit": "Accepted/custom-only versus canonically installed replay shows a simpler rule preserving authority and useful retrieval",
+                "status": "adopted",
+                "basis": "established"
+              }
+            ],
+            "summary_artifact": ".agents/artifacts/compaction-investigation/design-summary.md",
+            "report": ".agents/artifacts/compaction-investigation/report.md",
+            "review": "challenge-round2.json: no gaps; not an exhaustive independent replay",
+            "implementation": "Not performed or authorized; D5 remains awaiting-evidence"
+          },
+          "feedback": []
+        }
+      }
+    }
+  ]
+}
