@@ -2,7 +2,7 @@
 
 One entry per release. A release bumps `VERSION` and adds one entry here.
 
-## [0.1.0] - unreleased
+## [0.1.1] - unreleased
 
 First release from the standalone repository, formerly part of the deprecated handtools bundle.
 

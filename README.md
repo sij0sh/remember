@@ -191,7 +191,7 @@ python3 -m unittest discover -s tests
 ruff check .
 ```
 
-Parser tests skip when the optional tree-sitter extras are not installed. Install `requirements-dev.txt` for ruff.
+Install `requirements-dev.txt` and `requirements.txt` first: parser tests need the optional tree-sitter extras, and `ruff` runs the lint check.
 
 ## Uninstall
 
