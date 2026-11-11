@@ -10,6 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from graph_fixture import GraphCase
+from support import RUST_PARSER, TS_PARSER
 from helper.graph_store import Store, capture, read_file
 from helper.engine import SQLiteQuery
 from helper.graph_queries import TABLES, impact, reference
@@ -124,6 +125,7 @@ class GraphTests(GraphCase):
         name = lambda ident: (graph.nodes[ident].get("path"), graph.nodes[ident].get("qualname"))
         return {(name(e["source"]), name(e["target"])) for e in graph.body["edges"] if e["predicate"] == "CALLS_STATIC"}
 
+    @unittest.skipUnless(TS_PARSER, "optional tree-sitter TypeScript grammar not installed")
     def test_typescript_calls_follow_imports_reexports_and_this(self):
         self.write("src/store.ts", "export function save(x: number) { return x; }\nexport const load = () => 1;\n")
         self.write("src/index.ts", "export { save } from './store';\n")
@@ -144,6 +146,7 @@ class GraphTests(GraphCase):
         self.assertIn("dynamic_receiver", reasons)
         self.assertEqual(reasons["dynamic_receiver"]["calls"], 3)  # obj.save, React.render, new Api().run
 
+    @unittest.skipUnless(TS_PARSER, "optional tree-sitter TypeScript grammar not installed")
     def test_typescript_unique_import_binding_resolves_through_barrel(self):
         self.write("store.ts", "export function save(x: number) { return x; }\n")
         self.write("index.ts", "export { save } from './store';\n")
@@ -151,6 +154,7 @@ class GraphTests(GraphCase):
         graph = self.graph()
         self.assertEqual(self.calls(graph), {(("app.ts", "main"), ("store.ts", "save"))})
 
+    @unittest.skipUnless(RUST_PARSER, "optional tree-sitter Rust grammar not installed")
     def test_rust_calls_through_use_module_paths_and_self(self):
         self.write("Cargo.toml", '[package]\nname = "demo"\n')
         self.write("src/lib.rs", "pub mod store;\nuse crate::store::save;\npub struct World;\n"
@@ -172,6 +176,7 @@ class GraphTests(GraphCase):
         reasons = {g["reason"] for g in graph.body["gaps"] if g["area"] == "calls"}
         self.assertEqual(reasons, {"external_or_unbound"})
 
+    @unittest.skipUnless(RUST_PARSER, "optional tree-sitter Rust grammar not installed")
     def test_rust_calls_follow_pub_use_and_typed_receivers(self):
         self.write("Cargo.toml", '[package]\nname = "demo"\n')
         self.write("src/lib.rs", "mod numeric;\npub use numeric::parse;\npub struct World;\n"
@@ -192,6 +197,7 @@ class GraphTests(GraphCase):
         rules = {e["rule"] for e in graph.body["edges"] if e["predicate"] == "CALLS_STATIC"}
         self.assertIn("rust_receiver_type", rules)
 
+    @unittest.skipUnless(TS_PARSER, "optional tree-sitter TypeScript grammar not installed")
     def test_typescript_typed_receivers_and_constructors(self):
         self.write("src/store.ts", "export class Store {\n  save() { return 1; }\n}\n")
         self.write("src/index.ts", "export { Store } from './store';\n")

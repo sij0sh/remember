@@ -23,6 +23,21 @@ from helper import cite, discovery, runtime  # noqa: E402
 SCRIPT = str(ROOT / "scripts" / "remember.py")
 
 
+def parsers_available(*modules):
+    """True when the optional tree-sitter runtime and each named grammar import."""
+    try:
+        __import__("tree_sitter")
+        for module in modules:
+            __import__(module)
+    except ImportError:
+        return False
+    return True
+
+
+RUST_PARSER = parsers_available("tree_sitter_rust")
+TS_PARSER = parsers_available("tree_sitter_typescript")
+
+
 class Output:
     """Text stream with the byte buffer `delivery.write` expects."""
 
