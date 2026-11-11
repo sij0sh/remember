@@ -1,6 +1,6 @@
 ---
 name: remember
-description: Use at the start of each session or task.  Memory for coding agents to orient and discover additional context. 
+description: Memory for coding agents - known pitfalls, invariants, task state, and decisions from past sessions and commits, plus code relationships. Use before building a feature or fix, on resume, and whenever a task depends on understanding the codebase.
 ---
 
 # Remember
@@ -37,10 +37,3 @@ The output shows leads in four groups: `pitfall` (failed tries, corrections), `i
  The result status: partial limits your conclusions. Use show on a returned next[].ref. Do not rebuild its flags yourself. Always quote full session tokens or full commit SHAs.
 
  More detail: [runtime and SQL](references/runtime.md), [graph](references/graph.md), [history](references/history.md), [setup](references/reader.md).
-
-Workflow state: `query 'SELECT run_id, revision, state FROM workflow_runs' --format table`
-reads exact local journal heads. `workflow_events` adds history. These tables do not use ranked
-session search or its current-session exclusion. `source_ref` identifies the journal/stream/revision.
-Recon snapshots: `recon_snapshots`, `recon_contracts`, `recon_components`, `recon_relationships`,
-`recon_observations`, `recon_gaps` (one row per record per snapshot run; NULL = unknown, never "none";
-`record_revision` and `evidence` name what each row rests on). Observations are not decisions.

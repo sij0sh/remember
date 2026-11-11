@@ -54,6 +54,8 @@ git clone git@github.com:sij0sh/remember.git ~/.agents/skills/remember
 
 The scripts require Python 3.11+. Git and recordings are optional; without them, source tools still work.
 
+Use `~/.claude/skills/remember` for Claude Code, or your harness's configured skill location.
+
 ## Quick start
 
 Before building a feature, ask what shaped this area:
