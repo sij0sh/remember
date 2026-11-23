@@ -12,6 +12,8 @@ the file as it was at the edit, so symbols come from one stated basis per hunk:
   file, and today's graph symbol nodes give the definitions at those lines.
 - ``none``: neither applies. Nothing is guessed from a stale line number.
 """
+import difflib
+import json
 import re
 
 from . import repo_files
@@ -226,8 +228,40 @@ def _pi(event, record):
     return ("update", "pi_patch", hunks, None, None, truncated), None
 
 
+def _dsh(event, record):
+    arguments = pointer(record, event.get("payload_pointer"))
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            arguments = None
+    if not isinstance(arguments, dict):
+        return None, "no_structured_result"
+    if event.get("tool") == "write":
+        content = arguments.get("content")
+        if not isinstance(content, str):
+            return None, "no_structured_result"
+        return ("write", "dsh_write_content", _whole(content, "+"), None, content, 0), None
+    old, new = arguments.get("old_string"), arguments.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return None, "no_structured_result"
+    before, after = split_lines(old), split_lines(new)
+    # One recorded block without invented line numbers: only the recorded lines that differ
+    # count as changed, and the anchor basis locates their new-side text in today's file.
+    lines, old_count, new_count = [], 0, 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=before, b=after, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        lines.extend("-" + line for line in before[i1:i2])
+        lines.extend("+" + line for line in after[j1:j2])
+        old_count, new_count = old_count + i2 - i1, new_count + j2 - j1
+    if not lines:
+        return None, "no_change"
+    return ("update", "dsh_edit_arguments", [(0, old_count, 0, new_count, lines)], None, None, 0), None
+
+
 SUPPORTED_TOOLS = {"claude-code": {"Edit", "MultiEdit", "Write", "NotebookEdit"},
-                   "pi": {"edit", "write"}}
+                   "pi": {"edit", "write"}, "dsh": {"edit", "write"}}
 
 
 def _supported(event):
@@ -247,6 +281,8 @@ def _extractor(event):
         return _codex
     if harness == "pi" and ((kind == "tool_result" and tool == "edit") or (kind == "tool_call" and tool == "write")):
         return _pi
+    if harness == "dsh" and kind == "tool_call" and tool in ("edit", "write"):
+        return _dsh
     return None
 
 

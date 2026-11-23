@@ -1,0 +1,703 @@
+{
+  "schema_version": "2",
+  "name": "dsh",
+  "version": "1",
+  "harness": "dsh",
+  "description": "DeepSeek Harness v4 session logs. Append-origin messages form the transcript; surface replacements are model-only copies. Requests, assistant text, reasoning, tool calls/results, instructions, configuration, lifecycle and usage stay separate; toolResult pairs by exact toolCallId and isError marks failure. The log is linear, so file order supplies message ancestry. No parent ids are invented for replaced content.",
+  "detect": [
+    [
+      {
+        "pointer": "/type",
+        "equals": "session"
+      },
+      {
+        "pointer": "/createdAt",
+        "exists": true
+      }
+    ]
+  ],
+  "timestamp": [
+    "/time",
+    "/createdAt"
+  ],
+  "correlation": {
+    "when": [
+      {
+        "pointer": "/type",
+        "in": [
+          "user/message",
+          "assistant/message",
+          "tool/result"
+        ]
+      }
+    ],
+    "external_message_id": [
+      "/data/message/id",
+      "/data/id"
+    ]
+  },
+  "ancestry": {
+    "linear": [
+      {
+        "pointer": "/type",
+        "in": [
+          "user/message",
+          "assistant/message",
+          "tool/result"
+        ]
+      },
+      {
+        "pointer": "/surfaceOp/op",
+        "not_equals": "replace"
+      }
+    ]
+  },
+  "session": {
+    "external_id": [
+      "/id"
+    ],
+    "harness_version": [
+      "/version"
+    ],
+    "cwd": [
+      "/cwd"
+    ],
+    "when": [
+      {
+        "pointer": "/type",
+        "equals": "session"
+      }
+    ],
+    "parent": [
+      "/parentSession"
+    ],
+    "parent_when": [
+      {
+        "pointer": "/type",
+        "equals": "session"
+      },
+      {
+        "pointer": "/parentSession",
+        "exists": true
+      }
+    ]
+  },
+  "pairing": "call_id",
+  "representations": [
+    "replacement"
+  ],
+  "records": [
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user/message"
+        },
+        {
+          "pointer": "/surfaceOp/op",
+          "equals": "replace"
+        }
+      ],
+      "emit": "summary",
+      "purpose": "surface_replacement",
+      "representation": "replacement",
+      "text": {
+        "pointer": "/data/content",
+        "join": "text_blocks"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/surfaceOp/op",
+          "equals": "replace"
+        }
+      ],
+      "emit": "ignore"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user/message"
+        },
+        {
+          "pointer": "/data/source/kind",
+          "equals": "user"
+        }
+      ],
+      "emit": "user_message",
+      "text": {
+        "pointer": "/data/content",
+        "join": "text_blocks"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "user/message"
+        }
+      ],
+      "emit": "user_message",
+      "origin": "harness",
+      "channel": "injected",
+      "purpose": "context",
+      "text": {
+        "pointer": "/data/content",
+        "join": "text_blocks"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "assistant/message"
+        }
+      ],
+      "emit": "each",
+      "each": "/data/message/content",
+      "rules": [
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "text"
+            }
+          ],
+          "emit": "assistant_message",
+          "text": "/text"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "reasoning"
+            }
+          ],
+          "emit": "reasoning",
+          "text": "/text",
+          "origin": "assistant"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/type",
+              "equals": "tool-call"
+            }
+          ],
+          "emit": "tool_call",
+          "call_id": "/id",
+          "tool": "/name",
+          "input": {
+            "pointer": "/arguments",
+            "decode": "json"
+          }
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "tool/result"
+        }
+      ],
+      "emit": "tool_result",
+      "call_id": "/data/message/toolCallId",
+      "succeeded_when": [
+        {
+          "pointer": "/data/message/isError",
+          "equals": false
+        }
+      ],
+      "failed_when": [
+        {
+          "pointer": "/data/message/isError",
+          "equals": true
+        }
+      ],
+      "content": "/data/message/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "system/message"
+        }
+      ],
+      "emit": "instruction",
+      "origin": "system",
+      "purpose": "system_prompt",
+      "text": {
+        "pointer": "/data/message/content",
+        "join": "text_blocks"
+      }
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "developer/message"
+        }
+      ],
+      "emit": "instruction",
+      "origin": "system",
+      "purpose": "tool_registry",
+      "json": [
+        "/data/message/content"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "session"
+        }
+      ],
+      "emit": "config",
+      "purpose": "session",
+      "json": [
+        "/id",
+        "/version",
+        "/cwd",
+        "/createdAt",
+        "/agentPreset",
+        "/delegationDepth",
+        "/parentSession",
+        "/origin"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "model/selection"
+        }
+      ],
+      "emit": "config",
+      "purpose": "model",
+      "json": [
+        "/data/provider",
+        "/data/model"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "request/context"
+        }
+      ],
+      "emit": "config",
+      "purpose": "request_context",
+      "json": [
+        "/data/provider",
+        "/data/model",
+        "/data/contextWindow"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "permission/preset"
+        }
+      ],
+      "emit": "config",
+      "purpose": "permission",
+      "json": [
+        "/data/preset"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "sandbox/mode"
+        }
+      ],
+      "emit": "config",
+      "purpose": "sandbox",
+      "json": [
+        "/data/mode"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "approval/policy"
+        }
+      ],
+      "emit": "config",
+      "purpose": "approval",
+      "json": [
+        "/data/policy"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "agent-preset/selected"
+        }
+      ],
+      "emit": "config",
+      "purpose": "agent_preset",
+      "json": [
+        "/data/agentPreset"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "session/title"
+        }
+      ],
+      "emit": "config",
+      "purpose": "title",
+      "json": [
+        "/data/title",
+        "/data/source/kind"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "todo/write"
+        }
+      ],
+      "emit": "config",
+      "purpose": "todos",
+      "json": [
+        "/data/todos"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "turn/start"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "turn_start",
+      "json": [
+        "/data/turn"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "turn/end"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "turn_end",
+      "json": [
+        "/data/turn",
+        "/data/reason/kind",
+        "/data/reason/error/message",
+        "/data/reason/error/code"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "job/registered"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "job",
+      "json": [
+        "/data/jobId",
+        "/data/kind",
+        "/data/label",
+        "/data/startedAt",
+        "/data/toolCall/callId"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "job/settled"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "job_settled",
+      "json": [
+        "/data/jobId",
+        "/data/kind",
+        "/data/status",
+        "/data/cause",
+        "/data/detail",
+        "/data/finishedAt"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "command/run"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "command",
+      "json": [
+        "/data/commandId",
+        "/data/name",
+        "/data/args",
+        "/data/source/kind"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "command/done"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "command_done",
+      "json": [
+        "/data/commandId",
+        "/data/kind",
+        "/data/text"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compaction/prune"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "compaction_prune",
+      "json": [
+        "/data/shadowedRange",
+        "/data/shadowedSeqs",
+        "/data/shadowedTokenCount"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compaction/start"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "compaction_start",
+      "json": [
+        "/data/compactionId",
+        "/data/turn"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compaction/summary"
+        }
+      ],
+      "emit": "config",
+      "purpose": "compaction_summary",
+      "json": [
+        "/data/compactionId",
+        "/data/provider",
+        "/data/model",
+        "/data/shadowedRange",
+        "/data/shadowedTokenCount",
+        "/data/usage"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "compaction/end"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "compaction_end",
+      "json": [
+        "/data/compactionId",
+        "/data/turn"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "approval/asked"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "approval_asked",
+      "json": [
+        "/data/id",
+        "/data/toolName",
+        "/data/callId",
+        "/data/reason"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "approval/decided"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "approval_decided",
+      "json": [
+        "/data/id",
+        "/data/outcome"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "team/task"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "team_task",
+      "json": [
+        "/data/task/id",
+        "/data/task/subject",
+        "/data/task/status",
+        "/data/task/description"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "team/member"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "team_member",
+      "json": [
+        "/data/member/id",
+        "/data/member/name",
+        "/data/member/phase",
+        "/data/member/provider"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "subagent/catalog"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "subagent",
+      "json": [
+        "/data/childId",
+        "/data/childCreatedAt",
+        "/data/mode",
+        "/data/label"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "subagent/descriptor"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "subagent_descriptor",
+      "json": [
+        "/data/mode",
+        "/data/provider",
+        "/data/label",
+        "/data/agentProvider",
+        "/data/agentModel"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "workspace/changes"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "workspace_changes",
+      "json": [
+        "/data/turn"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "deliverables/presented"
+        }
+      ],
+      "emit": "lifecycle",
+      "purpose": "deliverables",
+      "json": [
+        "/data"
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "in": [
+            "tool/call",
+            "agent/inbox/spliced",
+            "request/header",
+            "session/title-llm-request",
+            "assistant/attempt",
+            "step/start",
+            "step/end",
+            "session/end-seed"
+          ]
+        }
+      ],
+      "emit": "ignore"
+    }
+  ],
+  "tools": {
+    "read": {
+      "operation": "file_read",
+      "path": "/file_path"
+    },
+    "edit": {
+      "operation": "file_edit",
+      "path": "/file_path"
+    },
+    "write": {
+      "operation": "file_edit",
+      "path": "/file_path"
+    },
+    "bash": {
+      "operation": "command",
+      "command": "/command"
+    }
+  },
+  "guarantees": {
+    "user_messages": "exact",
+    "assistant_messages": "exact",
+    "tool_calls": "exact",
+    "tool_results": "exact",
+    "file_reads": "supported_tools_only",
+    "file_edits": "supported_tools_only",
+    "commands": "supported_tools_only",
+    "shell_side_effects": "unsupported"
+  }
+}

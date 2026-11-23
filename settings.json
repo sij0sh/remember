@@ -2,6 +2,7 @@
   "recordings": {
     "pi": ["~/.pi/agent/sessions"],
     "codex": ["~/.codex/sessions"],
-    "claude-code": ["~/.claude/projects"]
+    "claude-code": ["~/.claude/projects"],
+    "dsh": ["~/.dsh/sessions"]
   }
 }

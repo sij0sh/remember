@@ -1,4 +1,5 @@
 """Profile loading and interpretation: pointers, conditions, events, detection."""
+import datetime
 import json
 import ntpath
 import posixpath
@@ -55,6 +56,18 @@ def field(spec, item, key=None):
 
 def first(specs, value):
     return next((v for s in specs if (v := field(s, value)) is not None), None)
+
+
+def stamp(specs, value):
+    """The recorded time as text: epoch milliseconds become ISO 8601 UTC, strings stay."""
+    found = first(specs, value)
+    if isinstance(found, (int, float)) and not isinstance(found, bool):
+        try:
+            moment = datetime.datetime.fromtimestamp(found / 1000, datetime.timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+        return moment.isoformat().replace("+00:00", "Z")
+    return found
 
 
 def matches(conditions, item, record):
@@ -168,6 +181,9 @@ def content_text(value):
 # Per-harness read adapters (D145): recorded read result -> observed text and its extent.
 CAT_N = re.compile(r"^ *(\d+)(?:\t|→)(.*)$")
 PI_MORE = re.compile(r"\n*\[(\d+) more lines in file\. Use offset=(\d+) to continue\.\]\s*$")
+DSH_LINE = re.compile(r"^(\d+): ?(.*)$")
+DSH_END = re.compile(r"\n*\(End of file - total (\d+) lines\)\s*$")
+DSH_RANGE = re.compile(r"\n*\(Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.\)\s*$")
 
 
 def _line_count(text):
@@ -219,4 +235,35 @@ def read_view(harness, record, text, arguments):
         return {"content": text, "start_line": start, "line_count": count,
                 "total_lines": None if ranged else count, "completeness": "range" if ranged else "complete",
                 "adapter": "pi:read_text"}
+    if harness == "dsh" and isinstance(text, str):
+        body = text
+        marker = body.find("<content>\n")
+        if marker >= 0:
+            body = body[marker + len("<content>\n"):]
+        if body.endswith("</content>"):
+            body = body[:-len("</content>")]
+        total = None
+        ended = truncated = False
+        found = DSH_RANGE.search(body)
+        if found:
+            total, truncated = int(found.group(3)), True
+            body = body[:found.start()]
+        else:
+            found = DSH_END.search(body)
+            if found:
+                total, ended = int(found.group(1)), True
+                body = body[:found.start()]
+        lines = body.split("\n")
+        if lines and not lines[-1]:
+            lines.pop()
+        matched = [DSH_LINE.match(line) for line in lines]
+        if not lines or not all(matched):
+            return None
+        start = int(matched[0].group(1))
+        complete = ended and start == 1
+        return {"content": "\n".join(m.group(2) for m in matched), "start_line": start,
+                "line_count": len(matched), "total_lines": total,
+                "completeness": "complete" if complete else "truncated" if truncated
+                else "range" if ranged and start else "unknown",
+                "adapter": "dsh:read_file"}
     return None

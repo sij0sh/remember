@@ -19,10 +19,13 @@ LONG_HEX = re.compile(r"\b[0-9a-f]{41,}\b")
 
 
 def recording_id(file):
-    """The session id a recording's file name carries (pi, codex, claude-code), else its stem."""
-    name = Path(file).name
-    found = re.findall(UUID, name)
-    return found[-1] if found else Path(name).stem
+    """The session id a recording carries: its file name, else its session directory (dsh)."""
+    path = Path(file)
+    for candidate in (path.name, path.parent.name):
+        found = re.findall(UUID, candidate)
+        if found:
+            return found[-1]
+    return path.stem
 
 
 def token(ref):
@@ -42,7 +45,8 @@ def _recording(rid):
     for paths in default_recordings().values():
         for root in paths:
             if root.is_dir():
-                found.extend(p for p in root.rglob("*.jsonl") if not p.is_symlink() and recording_id(p) == rid)
+                found.extend(p for pattern in ("*.jsonl", "*.jsonl.zstd") for p in root.rglob(pattern)
+                             if not p.is_symlink() and recording_id(p) == rid)
     unique = sorted({str(p.absolute()) for p in found})
     if not unique:
         raise ValueError(f"No recording named {rid} under the configured recordings; pass the JSON ref instead")

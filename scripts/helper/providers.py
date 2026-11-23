@@ -189,6 +189,8 @@ class Providers:
         if any(not g.get("scan_complete", True) for g in groups): reasons.append("scan_limit")
         if any(not g.get("text_complete", True) for g in groups): reasons.append("text_limit")
         if any(g.get("project_unknown") for g in groups): reasons.append("project_unknown")
+        if any(g.get("files_compressed_unavailable") for g in groups): reasons.append("decoder_unavailable")
+        if any(g.get("decompression_failed") for g in groups): reasons.append("decompression_failed")
         keys = ("records_scanned", "items_interpreted", "records_unrepresented", "interpretation_unsupported",
                 "interpretation_gaps", "unknown_records", "ignored_items", "ancestry_unknown", "ancestry_cycles",
                 "unpaired_results", "calls_without_result", "ambiguous_call_ids", "tail_alignment_skipped",

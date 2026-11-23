@@ -52,7 +52,8 @@ def _arguments(cache, event):
         found = pointer(record, event.get("payload_pointer")) if record and event.get("payload_pointer") else None
     except (KeyError, IndexError, TypeError, ValueError):
         found = None
-    return found if isinstance(found, dict) else {}
+    # A harness may record arguments as a JSON string (dsh tool-call parts).
+    return found if isinstance(found, dict) else _object(found) or {}
 
 
 def _base(op, path, kind, number=0):

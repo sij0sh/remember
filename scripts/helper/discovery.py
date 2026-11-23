@@ -9,12 +9,13 @@ from pathlib import Path
 
 from .profiles import PROFILES, detected, recorded_root, windows_path
 from .records import new_scope, records
+from . import zstd
 
 # Default archive locations per harness; settings.json at the skill root overrides them.
 SETTINGS = Path(os.environ.get("TRACE_SESSIONS_SETTINGS")
                 or Path(__file__).resolve().parents[2] / "settings.json")
 FALLBACK_RECORDINGS = {"pi": ["~/.pi/agent/sessions"], "codex": ["~/.codex/sessions"],
-                       "claude-code": ["~/.claude/projects"]}
+                       "claude-code": ["~/.claude/projects"], "dsh": ["~/.dsh/sessions"]}
 
 
 def header(path, max_record, max_scan, harness=None):
@@ -94,9 +95,18 @@ def candidate_files(options, scope, roots=None):
     """
     candidates = {}
     seen = set()
-    def add(label, path):
+    unavailable = {}
+    def add(label, path, explicit=False):
         check()
-        if path.is_symlink() or path.suffix != ".jsonl":
+        name = path.name
+        if path.is_symlink() or not zstd.recording_name(name):
+            return
+        if zstd.compressed(name) and zstd.decoder_kind() is None:
+            # Keep scanning other harnesses; report the archive that could not be read.
+            if explicit:
+                raise ValueError(f"{path}: no zstd decoder; install the zstandard package or the zstd executable")
+            key = label or "unknown"
+            unavailable[key] = unavailable.get(key, 0) + 1
             return
         stat = path.stat()
         key = stat.st_dev, stat.st_ino
@@ -109,7 +119,7 @@ def candidate_files(options, scope, roots=None):
         if path.is_symlink():
             continue
         if path.is_file():
-            add(label, path)
+            add(label, path, explicit=True)
         elif path.is_dir():
             for base, dirs, files in os.walk(path, followlinks=False):
                 dirs[:] = sorted(d for d in dirs if not Path(base, d).is_symlink() and d not in (".git", "node_modules", ".venv"))
@@ -124,6 +134,10 @@ def candidate_files(options, scope, roots=None):
     selected = {s["harness"]: [] for s in scope.get("sources", [])}
     zero = {"files_excluded_project": 0, "project_unknown": 0, "files_unrecognized": 0}
     group_scopes = {h: dict(zero) for h in selected}
+    for label in unavailable:
+        # An unreadable archive is a visible empty group, not a silent omission.
+        selected.setdefault(label, [])
+        group_scopes.setdefault(label, dict(zero))
     unrooted = {}
     wanted = {normalized_root(r) for r in (options.project, *options.also_roots) if r}
     for label, found in candidates.items():
@@ -172,6 +186,8 @@ def candidate_files(options, scope, roots=None):
                   "files_omitted_limit": max(0, len(files) - options.max_files)}
         if unrooted.get(harness):
             gscope["project_unknown_files"] = unrooted[harness][:3]
+        if unavailable.get(harness):
+            gscope["files_compressed_unavailable"] = unavailable[harness]
         # A rootless recording is reported by project_unknown, not as a scan limit.
         if not scope["discovery_complete"] or gscope["files_omitted_limit"]:
             gscope["scan_complete"] = False

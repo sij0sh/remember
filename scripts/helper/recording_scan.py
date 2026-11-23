@@ -6,6 +6,7 @@ from .graph_store import canonical_path
 from .reader import scan_file
 from .budget import check
 from .options import TEXT_BYTES_DEFAULT, TEXT_BYTES_AUTO_CAP
+from . import zstd
 
 def _size(path):
     try:
@@ -29,10 +30,13 @@ def _snapshot(path, scope, before):
     try:
         stat = Path(path).stat()
         scanned = scope.get("bytes_scanned", 0) - before
+        # A compressed artifact's decompressed bytes say nothing about the source size;
+        # its reader reports stream EOF instead.
+        complete = bool(scope.get("source_eof")) if zstd.compressed(path) else scanned >= stat.st_size
         scope.setdefault("snapshot", []).append({
             "file": canonical_path(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-            "inode": stat.st_ino, "bytes_scanned": scanned, "scan_complete": scanned >= stat.st_size})
-        return scanned >= stat.st_size
+            "inode": stat.st_ino, "bytes_scanned": scanned, "scan_complete": complete})
+        return complete
     except OSError:
         return None
 
@@ -73,7 +77,8 @@ class DiscoveryUnavailable(ValueError):
 
 
 # Harness-exported current-session ids. Claude Code exports CLAUDE_CODE_SESSION_ID.
-SESSION_ENV = ("CODEX_THREAD_ID", "PI_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+SESSION_ENV = ("CODEX_THREAD_ID", "PI_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
+               "DSH_SESSION_ID")
 
 
 def env_sessions():

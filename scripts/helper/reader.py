@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from .profiles import (PROFILES, content_text, detected, field, first, interpret,
-                       matches, pointer, recorded_root, resolve_path)
+                       matches, pointer, recorded_root, resolve_path, stamp)
 from .records import records, safe_ref  # re-exported for existing callers
 
 
@@ -149,6 +149,7 @@ def scan_file(path, options, scope, ranges=None):
         if harness:
             profile, root = PROFILES[harness], hinted_root
     # Only small projections survive a record; payloads remain in the source.
+    linear_parent = None
     # Recorded ancestry of every readable record, including records with no projected event
     # (for example an empty assistant error record). Citation labels are branch positions:
     # they need the full recorded chain, not only the rows a profile chose to emit.
@@ -164,6 +165,7 @@ def scan_file(path, options, scope, ranges=None):
                 profile = PROFILES[harness]
             root = root or recorded_root(record, profile and profile["harness"])
         local = 0
+        record_parent = None
         if record is not None and profile and profile.get("correlation", {}).get("external_parent_id"):
             correlation = profile.get("correlation", {})
             identity = first(correlation.get("external_message_id", []), record)
@@ -174,6 +176,12 @@ def scan_file(path, options, scope, ranges=None):
                     record_conflicts.add(identity)
                 else:
                     record_index.setdefault(identity, {"parent": parent, "ref": safe_ref(ref), "offset": ref.get("offset")})
+        if record is not None and profile and profile.get("ancestry"):
+            ancestry = profile["ancestry"].get("linear")
+            identity = first(profile.get("correlation", {}).get("external_message_id", []), record)
+            if identity and (ancestry is True or matches(ancestry or [], record, record)):
+                # A linear log records no parent ids: the previous message record is this one's parent.
+                record_parent, linear_parent = linear_parent, identity
         def add(kind, text="", payload_pointer=None, **fields):
             nonlocal local
             if scope["events_projected"] >= options.max_events:
@@ -212,9 +220,14 @@ def scan_file(path, options, scope, ranges=None):
             if payload_pointer is not None:
                 e["payload_pointer"] = payload_pointer
             if record and profile:
-                for key, specs in profile.get("correlation", {}).items():
-                    e[key] = first(specs, record)
-                e["timestamp"] = first(profile.get("timestamp", []), record)
+                correlation = profile.get("correlation", {})
+                applies = matches(correlation.get("when", []), record, record)
+                for key, specs in correlation.items():
+                    if key != "when":
+                        e[key] = first(specs, record) if applies else None
+                e["timestamp"] = stamp(profile.get("timestamp", []), record)
+                if record_parent and not e.get("external_parent_id"):
+                    e["external_parent_id"] = record_parent
             needles = options.text or ()
             searchable = str(text) + "\n" + "\n".join(str(fields.get(k, "")) for k in ("path", "command", "tool"))
             e["_matched"] = any(n.casefold() in searchable.casefold() for n in needles)
@@ -403,15 +416,15 @@ def scan_file(path, options, scope, ranges=None):
                 return found
         return group[0]
 
+    # Groups are complete here and kinds never change, so each group's representative
+    # and ambiguity are fixed: compute them once instead of on every ancestry step.
+    rep_by_mid = {mid: representative(group) for mid, group in by_mid.items()}
+    ambiguous_mids = {mid for mid, group in by_mid.items()
+                      if len({item.get("ref", {}).get("offset") for item in group}) > 1}
     ancestry_cache = {}
 
-    def ancestry(e):
-        """Nearest-first recorded ancestors and whether the chain reached a root."""
-        start = e.get("external_parent_id")
-        if not start:
-            return [], "root"
-        if start in ancestry_cache:
-            return ancestry_cache[start]
+    def walk(start):
+        """Full walk from one parent id; used where the walk meets a cycle."""
         chain, seen, parent = [], set(), start
         while parent:
             if parent in seen:
@@ -419,22 +432,57 @@ def scan_file(path, options, scope, ranges=None):
                 ancestry_cache[start] = found
                 return found
             seen.add(parent)
-            group = by_mid.get(parent)
-            if not group:
+            if parent not in rep_by_mid:
                 found = (chain, "missing")
                 ancestry_cache[start] = found
                 return found
-            if len({item.get("ref", {}).get("offset") for item in group}) > 1:
+            if parent in ambiguous_mids:
                 # The same native message ID at different records is not one proven ancestor.
                 found = (chain, "ambiguous")
                 ancestry_cache[start] = found
                 return found
-            event = representative(group)
+            event = rep_by_mid[parent]
             chain.append(event)
             parent = event.get("external_parent_id")
         found = (chain, "root")
         ancestry_cache[start] = found
         return found
+
+    def ancestry(e):
+        """Nearest-first recorded ancestors and whether the chain reached a root.
+        Off a cycle, a parent's result is its representative plus its own parent's result,
+        so each id is walked once and later chains extend cached ones."""
+        start = e.get("external_parent_id")
+        if not start:
+            return [], "root"
+        if start in ancestry_cache:
+            return ancestry_cache[start]
+        path, seen, parent = [], set(), start
+        while True:
+            if parent in ancestry_cache:
+                tail = ancestry_cache[parent]
+                break
+            if parent in seen:
+                return walk(start)
+            seen.add(parent)
+            if parent not in rep_by_mid:
+                tail = ([], "missing")
+                break
+            if parent in ambiguous_mids:
+                tail = ([], "ambiguous")
+                break
+            path.append(parent)
+            parent = rep_by_mid[parent].get("external_parent_id")
+            if not parent:
+                tail = ([], "root")
+                break
+        chain, status = tail
+        if not path:
+            ancestry_cache[start] = tail
+        for mid in reversed(path):
+            chain = [rep_by_mid[mid]] + chain
+            ancestry_cache[mid] = (chain, status)
+        return ancestry_cache[start]
 
     def human_user(x):
         # A parent-session prompt is delegated by metadata, not proven human input.
@@ -488,7 +536,7 @@ def scan_file(path, options, scope, ranges=None):
         # Lane is the conversation lane of the nearest supported request. A follow-up under
         # an assistant/result continues that lane; a user message parented to a user starts
         # a sibling lane. Descendants inherit the request's lane, so they cannot split off.
-        parent_message = representative(by_mid[e["external_parent_id"]]) if e.get("external_parent_id") in by_mid else None
+        parent_message = rep_by_mid.get(e.get("external_parent_id")) if e.get("external_parent_id") else None
         if own is not None and human_user(own):
             if parent_message is not None and parent_message.get("kind") != "user_message" and parent_message.get("lane"):
                 lane, lane_basis = parent_message["lane"], "continued_exchange"
@@ -525,7 +573,7 @@ def scan_file(path, options, scope, ranges=None):
         e["ancestry_status"] = status if e.get("external_parent_id") else "root"
         e["ancestry_depth"] = len(chain)
         if e.get("external_message_id"):
-            e["message_ambiguous"] = len({x.get("ref", {}).get("offset") for x in by_mid[e["external_message_id"]]}) > 1
+            e["message_ambiguous"] = e["external_message_id"] in ambiguous_mids
             if e["message_ambiguous"]:
                 scope["ambiguous_message_ids"] = scope.get("ambiguous_message_ids", 0) + 1
         if own is not None and human_user(own):
