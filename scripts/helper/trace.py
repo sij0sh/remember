@@ -415,7 +415,6 @@ def _widen(base_argv, recording, data, extra=()):
                 add(requests[at - 1].get("ref"), "Trace the previous human exchange in this recording")
             if at + 1 < len(requests):
                 add(requests[at + 1].get("ref"), "Trace the next human exchange in this recording")
-    root_branch = request.get("branch") if request else None
     for lane in data["lanes"]:
         if lane.get("lane_role") == "fork":
             add(lane.get("ref"), "Trace a separate fork lane under the same request")

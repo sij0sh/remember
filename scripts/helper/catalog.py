@@ -6,6 +6,25 @@ from .graph_queries import TABLES
 from .projection import FIELDS
 
 
+def _recon_tables():
+    """Recon projection columns from the shared engine beside this skill (skills/_engine), else empty."""
+    import sys
+    from pathlib import Path
+    base = next((p for p in Path(__file__).resolve().parents if (p / '_engine' / '__init__.py').is_file()), None)
+    if base is None:
+        return {}
+    if str(base) not in sys.path:
+        sys.path.append(str(base))
+    try:
+        from _engine.recon.query import PROJECTIONS
+    except ImportError:
+        return {}
+    return PROJECTIONS
+
+
+RECON = _recon_tables()
+
+
 @dataclass(frozen=True)
 class Table:
     columns: dict
@@ -25,6 +44,17 @@ SESSION_COLUMNS = {name: "TEXT" for name in (
 SESSION_COLUMNS.update({name: "INTEGER" for name in ("events", "user_messages", "tool_calls", "failed_calls",
                                                        "repo_paths")})
 CATALOG = {
+    "workflow_decisions": Table({"run_id":"TEXT", "session_id":"TEXT", "decision_id":"TEXT", "question":"TEXT",
+                                 "answer":"TEXT", "status":"TEXT", "source_ref":"TEXT"},
+                                "workflow", "one explicit recorded plan or project ADR decision"),
+    "workflow_authorizations": Table({"run_id":"TEXT", "session_id":"TEXT", "plan_revision":"INTEGER",
+                                      "draft_hash":"TEXT", "user_ref":"TEXT", "source":"TEXT", "source_ref":"TEXT"},
+                                     "workflow", "one reported authorization; not proof of user consent"),
+    "workflow_events": Table({"run_id": "TEXT", "revision": "INTEGER", "event_id": "TEXT",
+                              "kind": "TEXT", "payload": "TEXT", "source_ref": "TEXT"},
+                             "workflow", "one committed workflow event", ("source_ref",)),
+    "workflow_runs": Table({"run_id": "TEXT", "revision": "INTEGER", "state": "TEXT", "source_ref": "TEXT"},
+                           "workflow", "one exact journal stream head", ("source_ref",)),
     "nodes": Table(TABLES["nodes"], "graph", "one source node", ("id",)),
     "edges": Table(TABLES["edges"], "graph", "one typed relationship", ("id",)),
     "gaps": Table(TABLES["gaps"], "graph", "one unresolved occurrence"),
@@ -60,7 +90,17 @@ CATALOG = {
     "summary_refs": Table(summaries.REF_COLUMNS, "summaries", summaries.REF_GRAIN,
                           ("ref_id",), "transient"),
 }
-DEPENDENCIES = {"graph": (), "recordings": (), "git": (), "links": ("recordings",),
+RECON_TABLES = {name: Table({**{c: ("INTEGER" if c in ("revision", "record_revision", "closed") else "TEXT")
+                               for c in RECON[name]}, "source_ref": "TEXT"}, "workflow", grain, ("source_ref",))
+                 for name, grain in (
+                     ("recon_snapshots", "one recon snapshot head; journal is authoritative"),
+                     ("recon_components", "one recon component record in a snapshot"),
+                     ("recon_contracts", "one recon contract record; unknown fields are NULL"),
+                     ("recon_relationships", "one recon relationship record"),
+                     ("recon_observations", "one recon observation; inferred patterns are not decisions"),
+                     ("recon_gaps", "one recon discovery gap")) if name in RECON}
+CATALOG.update(RECON_TABLES)
+DEPENDENCIES = {"workflow": (), "graph": (), "recordings": (), "git": (), "links": ("recordings",),
                 "edits": ("recordings", "graph"), "operations": ("recordings",),
                 "checkpoints": ("recordings",), "summaries": ("checkpoints",), "segments": ("recordings",),
                 "episodes": ("recordings", "operations", "links"),

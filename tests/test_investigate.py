@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from helper.recording_scan import schedule
-from support import invoke
+from support import TS_PARSER, invoke
 
 ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
 
@@ -308,6 +308,7 @@ class InvestigateTests(unittest.TestCase):
         self.assertIn("path", self.leads(out, "invariant")[0]["match_bases"])
         self.assertFalse(any(self.cache.rglob("snapshot-*.json")))
 
+    @unittest.skipUnless(TS_PARSER, "optional tree-sitter TypeScript grammar not installed")
     def test_tiny_budget_keeps_views_and_one_delivery_ref(self):
         self.session("p", [("user", "Exports must escape commas in every generated CSV file. " * 8)])
         out = self.run_cli("investigate", "export", "--recordings", str(self.archive), "--max-bytes", "2048")

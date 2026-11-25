@@ -328,7 +328,8 @@ class RuntimeTests(unittest.TestCase):
 
     @unittest.skipIf(sys.platform == "win32", "SIGINT delivery needs a POSIX process group")
     def test_sigint_cancels_query_without_traceback(self):
-        import signal, time
+        import signal
+        import time
         p=subprocess.Popen([sys.executable,str(ROOT/'scripts/remember.py'),'query',
                             'WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n) SELECT count(*) FROM n',
                             '--seconds','30','--repo',str(self.repo),'--cache',str(self.cache)],

@@ -55,7 +55,8 @@ def _jsonc(text):
     """Parse JSON with comments and trailing commas (tsconfig); None when unreadable."""
     import json
     try:
-        keep = lambda m: m.group(1) or ""
+        def keep(m):
+            return m.group(1) or ""
         value = json.loads(JSONC_COMMA.sub(keep, JSONC_COMMENT.sub(keep, text or "")))
     except ValueError:
         return None

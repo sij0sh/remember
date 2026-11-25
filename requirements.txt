@@ -6,3 +6,5 @@ tree-sitter-go==0.25.0
 tree-sitter-javascript==0.25.0
 tree-sitter-rust==0.24.2
 tree-sitter-typescript==0.23.2
+
+# Optional on Python < 3.14 for .jsonl.zstd recordings: pip install zstandard

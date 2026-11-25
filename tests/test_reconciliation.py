@@ -217,7 +217,8 @@ class OutcomeTests(unittest.TestCase):
 
 class GitVerifyTests(unittest.TestCase):
     def test_verify_separates_resolution_and_reachability(self):
-        import subprocess, tempfile
+        import subprocess
+        import tempfile
         from helper.git_resolve import GitResolver
         with tempfile.TemporaryDirectory() as temp:
             def git(*args):

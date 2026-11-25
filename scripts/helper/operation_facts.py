@@ -146,15 +146,18 @@ def operations(recordings, cache):
             tool_name = event.get("tool")
             action = STRUCTURED_GIT.get(tool_name) or event.get("operation") or event.get("kind") or "unknown"
             if tool_name == "git_plan_context":
-                if new_operation: coverage["plan_snapshots"] += 1
+                if new_operation:
+                    coverage["plan_snapshots"] += 1
                 interpretation, adapter, basis = ("structured" if event.get("result_ref") else "missing_result",
                                                   "pi:git_plan_context", "planning_snapshot")
             elif tool_name == "git_commit_plan":
-                if new_operation: coverage["commit_plans"] += 1
+                if new_operation:
+                    coverage["commit_plans"] += 1
                 interpretation, adapter, basis = ("structured" if event.get("result_ref") else "missing_result",
                                                   "pi:git_commit_plan", "structured_commit")
             elif tool_name == "git_record":
-                if new_operation: coverage["commit_records"] += 1
+                if new_operation:
+                    coverage["commit_records"] += 1
                 interpretation, adapter, basis = ("structured" if event.get("result_ref") else "missing_result",
                                                   "pi:git_record", "structured_record")
             elif action in KNOWN_ACTIONS:

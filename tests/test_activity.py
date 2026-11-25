@@ -133,7 +133,8 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(result.json()["operation"], "activity")
 
     def test_small_page_has_executable_continuation(self):
-        out = self.cli("activity", "src/app.py", "--limit", "1", "--max-bytes", "6000")
+        # Continuation tokens carry the absolute temp path, which is longer on CI runners.
+        out = self.cli("activity", "src/app.py", "--limit", "1", "--max-bytes", "12000")
         self.assertFalse(out["delivery"]["complete"])
         self.assertTrue(out["next"])
         self.assertEqual(out["delivery"]["returned"], 1)

@@ -49,7 +49,8 @@ def page(document, args, continuation=None):
     output["results"] = list(selected)  # fit() pops from this list; selected stays whole.
     more = bool(output.pop("more_rows", False))
     original_next = output.get("next") or []
-    if not isinstance(original_next, list): original_next = [original_next]
+    if not isinstance(original_next, list):
+        original_next = [original_next]
 
     def finish():
         following = args.offset + len(output["results"])
@@ -73,7 +74,8 @@ def page(document, args, continuation=None):
                 view["delivered"] = sum(name in (row.get("categories") or ()) for row in shown)
                 view["omitted"] = max(0, view.get("eligible", 0) - view["delivered"])
     finish()
-    size = lambda: len(render(output, args, fields))
+    def size():
+        return len(render(output, args, fields))
     if not fit(output, finish, size, args.max_bytes):
         # Keep the operation, coverage state and executable continuation rather than an oversized envelope.
         output["coverage"] = {"summary_omitted": True, "state": output["status"]}

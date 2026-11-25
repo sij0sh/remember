@@ -143,11 +143,13 @@ class Runtime:
             if flag not in ('--input', '--recordings', '--project-root'):
                 continue
             at = index if equal else index + 1
-            if at >= len(argv): continue
+            if at >= len(argv):
+                continue
             value = inline if equal else argv[at]
             if flag == '--input':
                 name, sep, path = value.partition('=')
-                if sep and path != '-': value = name + '=' + str(Path(path).expanduser().resolve())
+                if sep and path != '-':
+                    value = name + '=' + str(Path(path).expanduser().resolve())
             else:
                 value = str(Path(value).expanduser().resolve())
             argv[at] = flag + '=' + value if equal else value
@@ -263,7 +265,8 @@ class Runtime:
                                        args.depth, args.max_nodes, seconds=deadline.remaining())
             rows += [{"section": "relationships", **r} for r in found]
             rel = graph.document('relationships', found, traversal=limits)
-            if limits['bounds']: rel['gaps'] = [*rel['gaps'], {"area": "traversal", "reason": "bounded"}]
+            if limits['bounds']:
+                rel['gaps'] = [*rel['gaps'], {"area": "traversal", "reason": "bounded"}]
             rel_incomplete = graph_cli.incomplete(rel, graph)
         coverage['relationships'] = {"complete": not rel_incomplete, "gaps": rel_incomplete,
                                      "meaning": "static potential relationships; absence is not proof of safety"}
@@ -314,7 +317,8 @@ class Runtime:
         next_items = []
         if history_partial:
             recover = self.recovery(argv, "Rescan target history with wider recording limits")
-            if recover: next_items.append(recover)
+            if recover:
+                next_items.append(recover)
         if src.get('text') is not None and end >= start+PREVIEW_LINES:
             next_items.append(continuations.encode(
                 ['show', source_ref, '--start-line', str(start+PREVIEW_LINES), '--lines', str(end-start-PREVIEW_LINES+1),
@@ -408,7 +412,6 @@ class Runtime:
                       "selected": selected, "symbol_events": symbol_events}
 
     def activity(self, deadline):
-        args = self.args
         early, found = self.target_operations(deadline, "activity")
         if early:
             return early
@@ -541,7 +544,8 @@ class Runtime:
             sha = ref.removeprefix('git:')
             text = GitResolver().run(self.store.root, 'show', '--no-ext-diff', '--no-textconv', '--format=fuller', sha,
                                      timeout=deadline.remaining())
-            if text is None: raise ValueError('Commit unavailable in the selected repository')
+            if text is None:
+                raise ValueError('Commit unavailable in the selected repository')
             rows = [{"line": i+1, "text": line, "ref": sha} for i,line in enumerate(text.splitlines())]
             return Result({"operation": "show", "results": rows, "coverage": {"commit": {"complete": True}}}, digest(text), self.base_argv())
         doc = graph_cli.show(self.store, self.args)

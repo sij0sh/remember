@@ -14,11 +14,11 @@ class LayoutTests(unittest.TestCase):
 
     def test_reference_leaves_stay_small(self):
         leaves = {path.name: path.stat().st_size for path in (ROOT / "references").glob("*.md")}
-        self.assertEqual(set(leaves), {"reader.md", "runtime.md", "graph.md", "history.md"})
+        self.assertEqual(set(leaves), {"reader.md", "runtime.md", "graph.md", "history.md", "architecture.md"})
         limits = {"history.md": 8 * 1024}  # D153: new evidence behavior needs words; guard still pins regrowth
         for name, size in leaves.items():
             self.assertLessEqual(size, limits.get(name, 6 * 1024), name)
-        self.assertLessEqual(sum(leaves.values()), 18 * 1024)
+        self.assertLessEqual(sum(leaves.values()), 24 * 1024)
 
     def test_helpers_are_a_package(self):
         self.assertTrue((SCRIPTS / "helper" / "__init__.py").is_file())

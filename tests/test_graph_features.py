@@ -1,8 +1,9 @@
 """Search, projection, paging and parser edge cases over the graph CLI."""
 import json
+import unittest
 from graph_fixture import GraphCase
 from helper.graph_queries import impact
-from support import invoke
+from support import RUST_PARSER, TS_PARSER, invoke
 
 
 class FeatureTests(GraphCase):
@@ -99,6 +100,7 @@ class FeatureTests(GraphCase):
                    'export declare function hostCall(): void;\n')
         self.assertIn('generated/vendored: 2 files', self.raw('map', '--no-primer'))
 
+    @unittest.skipUnless(RUST_PARSER, "optional tree-sitter Rust grammar not installed")
     def test_rust_cfg_test_modules_are_tests(self):
         self.write('Cargo.toml', '[package]\nname = "demo"\n')
         self.write('src/lib.rs', 'pub mod numeric;\npub mod plain;\n')
@@ -129,6 +131,7 @@ class FeatureTests(GraphCase):
         self.assertIn('referenced but missing: scripts/check.sh', text)
         self.assertNotIn('dist/out.js', text)
 
+    @unittest.skipUnless(TS_PARSER, "optional tree-sitter TypeScript grammar not installed")
     def test_type_only_imports_are_marked(self):
         self.write('src/a.ts', "import type { B } from './b';\nexport const a = 1;\nexport type A = B;\n")
         self.write('src/b.ts', "import { a } from './a';\nexport type B = typeof a;\n")

@@ -1,4 +1,5 @@
 """Invocation-local provider registry; shared source, Git and recording datasets."""
+from pathlib import Path
 import os
 from types import SimpleNamespace
 from . import (catalog, cite, commit_links, edit_hunks, episode_links, file_observations, message_segments, git_file_history, graph_cli, graph_queries,
@@ -7,7 +8,7 @@ from .engine import Input
 from .root_map import parse_root_map, remap
 from .git_resolve import GitResolver
 from .graph_store import canonical_path, digest
-from .options import DiscoveryOptions, ScanOptions, TEXT_BYTES_DEFAULT
+from .options import DiscoveryOptions, ScanOptions
 from .projection import clean, human
 from .recording_scan import DiscoveryUnavailable, lineages, scan_group, scan_project, scan_scheduled, text_budget
 from .discovery import candidate_files
@@ -65,6 +66,64 @@ class Providers:
         definition = catalog.CATALOG[name]
         return Input(name, self.tables[name], self.coverage[definition.provider],
                      list(definition.columns), definition.columns, definition.grain)
+
+    def load_workflow(self):
+        import json
+        try:
+            from _engine import storage
+            from _engine.events import Journal, replay
+            from _engine.recon import query as recon_query, reduce as recon_reduce
+        except ImportError:  # Standalone installs ship without the deprecated handtools engine.
+            self.tables.update({'workflow_decisions': [], 'workflow_authorizations': [],
+                                'workflow_events': [], 'workflow_runs': []})
+            self.coverage['workflow'] = {'complete': False, 'state': 'unavailable',
+                                         'reason': 'the shared _engine package is not installed'}
+            return
+        key = storage.project_key(Path(self.store.root))
+        events, runs, decisions, authorizations = [], [], [], []
+        recon = {name: [] for name in recon_query.PROJECTIONS}
+        for path in sorted(storage.state_root().glob('*/' + key + '/events.sqlite3')):
+            store = Journal(path, recon_reduce.REDUCERS)
+            with store.connect() as db:
+                names = [x[0] for x in db.execute('SELECT DISTINCT run FROM events')]
+            for name in names:
+                state, chain = replay(store.history(name), recon_reduce.REDUCERS)
+                ref = str(path) + '#' + name
+                if path.parent.parent.name == 'recon' and state and 'snapshot' in state:
+                    closed = chain[-1]['kind'] == 'run.closed'
+                    for table, rows in recon_query.projection(state, len(chain), closed).items():
+                        recon[table] += [dict(row, source_ref=ref + ':' + str(len(chain))) for row in rows]
+                for item in chain:
+                    events.append({'run_id': name, 'revision': item['revision'], 'event_id': item['event_id'],
+                                   'kind': item['kind'], 'payload': json.dumps(item['payload']),
+                                   'source_ref': ref + ':' + str(item['revision'])})
+                runs.append({'run_id': name, 'revision': len(chain), 'state': json.dumps(state), 'source_ref': ref})
+                for session in (state or {}).get('sessions', []):
+                    sid = session['id']
+                    for decision in session.get('plan', {}).get('decisions', []):
+                        decisions.append({'run_id':name, 'session_id':sid, 'decision_id':decision['id'],
+                                          'question':decision['question'], 'answer':decision.get('answer'),
+                                          'status':'answered' if decision.get('answer') else 'open',
+                                          'source_ref':ref + ':' + str(len(chain))})
+                    if session.get('authorization'):
+                        auth = session['authorization']
+                        authorizations.append({'run_id':name, 'session_id':sid, 'plan_revision':auth['plan_revision'],
+                            'draft_hash':auth['draft_hash'], 'user_ref':auth.get('user_ref'), 'source':auth['source'],
+                            'source_ref':ref + ':' + str(len(chain))})
+        adr = Path(self.store.root) / '.agents' / 'design' / 'decisions.json'
+        if adr.is_file():
+            for goal in json.loads(adr.read_text()).get('goals', []):
+                for decision in goal.get('decisions', []):
+                    decisions.append({'run_id':'project-adr', 'session_id':goal['id'], 'decision_id':decision['id'],
+                        'question':decision['question'], 'answer':decision.get('answer'),
+                        'status': 'superseded' if decision.get('status') == 'superseded' else
+                                  'answered' if decision.get('answer') else 'open', 'source_ref':str(adr)})
+        self.tables['workflow_decisions'], self.tables['workflow_authorizations'] = decisions, authorizations
+
+        self.tables['workflow_events'], self.tables['workflow_runs'] = events, runs
+        self.tables.update(recon)
+        self.coverage['workflow'] = {'complete': True, 'scope': 'exact local project journals',
+                                     'transcript_capture': 'not_searched'}
 
     def load_graph(self):
         self.graph = graph_cli.get_graph(self.store, self.args)
@@ -185,12 +244,18 @@ class Providers:
         self.tables["events"] = self.tables["rows"] = rows
         self.tables["sessions"] = sessions
         reasons = []
-        if not scope.get("discovery_complete", True): reasons.append("discovery_limit")
-        if any(not g.get("scan_complete", True) for g in groups): reasons.append("scan_limit")
-        if any(not g.get("text_complete", True) for g in groups): reasons.append("text_limit")
-        if any(g.get("project_unknown") for g in groups): reasons.append("project_unknown")
-        if any(g.get("files_compressed_unavailable") for g in groups): reasons.append("decoder_unavailable")
-        if any(g.get("decompression_failed") for g in groups): reasons.append("decompression_failed")
+        if not scope.get("discovery_complete", True):
+            reasons.append("discovery_limit")
+        if any(not g.get("scan_complete", True) for g in groups):
+            reasons.append("scan_limit")
+        if any(not g.get("text_complete", True) for g in groups):
+            reasons.append("text_limit")
+        if any(g.get("project_unknown") for g in groups):
+            reasons.append("project_unknown")
+        if any(g.get("files_compressed_unavailable") for g in groups):
+            reasons.append("decoder_unavailable")
+        if any(g.get("decompression_failed") for g in groups):
+            reasons.append("decompression_failed")
         keys = ("records_scanned", "items_interpreted", "records_unrepresented", "interpretation_unsupported",
                 "interpretation_gaps", "unknown_records", "ignored_items", "ancestry_unknown", "ancestry_cycles",
                 "unpaired_results", "calls_without_result", "ambiguous_call_ids", "tail_alignment_skipped",
@@ -308,7 +373,8 @@ class Providers:
             return None
         if location == "repository":
             root = self.roots.get(event.get("recording_id"))
-            if not root: return None
+            if not root:
+                return None
             path = os.path.join(root, path)
         path, _ = remap(path, self.root_map)
         path = os.path.abspath(path)

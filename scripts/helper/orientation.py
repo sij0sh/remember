@@ -136,7 +136,8 @@ def render(data, max_bytes=2048):
                                              else f"{state['changed']} changed, {state['untracked']} untracked")]
     # Drop order: last commit first, then last lead; header and tree stay.
     middle, dropped = [*leads, *shown], 0
-    size = lambda: len(("\n".join([header, *middle, *tail]) + "\n").encode("utf-8"))
+    def size():
+        return len(("\n".join([header, *middle, *tail]) + "\n").encode("utf-8"))
     while middle and size() > max_bytes:
         middle.pop()
         dropped += 1

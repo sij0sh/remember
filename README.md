@@ -46,13 +46,13 @@ Results are leads with evidence refs, not conclusions. The agent reads the sourc
 
 ## Install
 
-`remember` is a standard agent skill. Place it in your harness skill folder.
-
-The scripts require Python 3.11+. Git and recordings are optional; without them, source tools still work.
+`remember` is a standalone skill in this repository. Clone it where your harness discovers skills, for example:
 
 ```bash
-git clone https://github.com/sij0sh/remember.git ~/.agents/skills/remember
+git clone git@github.com:sij0sh/remember.git ~/.agents/skills/remember
 ```
+
+The scripts require Python 3.11+. Git and recordings are optional; without them, source tools still work.
 
 Use `~/.claude/skills/remember` for Claude Code, or your harness's configured skill location.
 
@@ -160,13 +160,18 @@ remember makes evidence easier to inspect. It does not certify a change as safe.
 
 Python syntax extraction is built in. For tree-sitter extraction of Rust, Go, TypeScript/JavaScript and shell:
 
+Keep the virtual environment outside the skill directory, because an update replaces that folder.
+`R` is this skill's directory (the parent of `S`):
+
 ```bash
-cd ~/.agents/skills/remember
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+R="$HOME/.agents/skills/remember"
+python3 -m venv ~/.venvs/remember
+~/.venvs/remember/bin/python -m pip install -r "$R/requirements.txt"
 ```
 
-Use `.venv/bin/python` for commands that need those packages.
+Use `~/.venvs/remember/bin/python` for commands that need those packages.
+
+dsh `.jsonl.zstd` recordings need a zstd decoder: Python 3.14+ includes one; on 3.11-3.13 install the optional `zstandard` package into the same venv (`pip install zstandard`).
 
 ## Configuration
 
@@ -181,18 +186,21 @@ Use `--repo DIR` for another repository, `--cache DIR` to relocate the cache, `-
 
 ## Tests
 
+Run from the repository root; the suite uses disposable repositories and needs no network:
+
 ```bash
-cd ~/.agents/skills/remember
 python3 -m unittest discover -s tests
+ruff check .
 ```
 
-Standard library only. Tests use disposable repositories.
+Parser tests skip when the optional tree-sitter extras are not installed; `requirements.txt` enables them. Install `requirements-dev.txt` for `ruff`.
 
 ## Uninstall
 
+Remove the skill directory, then the cache and optional venv:
+
 ```bash
-rm -rf ~/.agents/skills/remember
-rm -rf ~/.cache/remember
+rm -rf ~/.agents/skills/remember ~/.cache/remember ~/.venvs/remember
 ```
 
 Adjust paths if you used another skill location, `XDG_CACHE_HOME` or `--cache`. With default settings, remember writes nothing into the repositories it reads.
@@ -203,4 +211,5 @@ Adjust paths if you used another skill location, `XDG_CACHE_HOME` or `--cache`. 
 - [Graph tools](references/graph.md)
 - [History tools](references/history.md)
 - [Setup and limits](references/reader.md)
+- [Architecture](references/architecture.md)
 - [Issues](https://github.com/sij0sh/remember/issues)

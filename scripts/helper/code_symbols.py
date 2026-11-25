@@ -112,7 +112,8 @@ def _rust_definition(node, enclosing):
 
 def _rust_uses(node, prefix):
     """(path, local name) for each leaf of a `use` tree."""
-    join = lambda *parts: "::".join(p for p in parts if p)
+    def join(*parts):
+        return "::".join(p for p in parts if p)
     kind = node.type
     if kind == "self":
         yield prefix, prefix.rsplit("::", 1)[-1]

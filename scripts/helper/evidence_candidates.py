@@ -37,8 +37,8 @@ def _path(token, root):
         expanded = os.path.expanduser(token)
         if expanded.startswith("~"):
             return None  # unknown user (~name): never a repository path
-        full = canonical_path(expanded)
-        base = canonical_path(root).rstrip("/") + "/"
+        full = canonical_path(expanded).replace(os.sep, "/")
+        base = canonical_path(root).replace(os.sep, "/").rstrip("/") + "/"
         return full[len(base):] if full.startswith(base) and len(full) > len(base) else None
     token = token[2:] if token.startswith("./") else token
     return token if token and not token.startswith("../") else None

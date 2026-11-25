@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.ruff_cache/
 .agents/*
 .agents/
 state/
+.env
+.env.*

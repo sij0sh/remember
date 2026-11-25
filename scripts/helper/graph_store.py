@@ -401,7 +401,8 @@ class Store:
     def freshness(self, body):
         before = body["source"]
         now = capture(self.root, **before["inventory"]["limits"], exclude=before["extra_exclusions"])
-        fields = lambda src: {f["path"]: (f["digest"], f["state"]) for f in src["files"]}
+        def fields(src):
+            return {f["path"]: (f["digest"], f["state"]) for f in src["files"]}
         old, new = fields(before), fields(now)
         changed = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
         reliable = all(s["inventory"]["complete"] and s["inventory"]["stable"]

@@ -115,8 +115,8 @@ def counts_valid(hunks):
 
 def _whole(content, sign):
     lines = split_lines(content or "")
-    return [(0, 0, 1, len(lines), [sign + l for l in lines])] if sign == "+" else \
-           [(1, len(lines), 0, 0, [sign + l for l in lines])]
+    return [(0, 0, 1, len(lines), [sign + text for text in lines])] if sign == "+" else \
+           [(1, len(lines), 0, 0, [sign + text for text in lines])]
 
 
 def shape(lines):
@@ -171,7 +171,7 @@ def anchor(block, new_start, current):
     size, start = len(block), max(new_start - 1, 0)
     first = block[0].rstrip("\r")
     hits = [i for i, line in enumerate(current) if line.rstrip("\r") == first
-            and [l.rstrip("\r") for l in current[i:i + size]] == [l.rstrip("\r") for l in block]]
+            and [row.rstrip("\r") for row in current[i:i + size]] == [row.rstrip("\r") for row in block]]
     if len(hits) == 1:
         return ("exact" if hits[0] == start else "shifted"), hits[0]
     return ("ambiguous" if hits else "not_found"), None
