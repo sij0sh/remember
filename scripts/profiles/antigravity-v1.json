@@ -1,0 +1,216 @@
+{
+  "schema_version": "2",
+  "name": "antigravity",
+  "version": "1",
+  "harness": "antigravity",
+  "description": "Google Antigravity (CLI / 2.0 / SDK) transcript_full.jsonl recordings. Linear step logs with zero-based step_index ancestry; PLANNER_RESPONSE emits thinking, content and tool_calls; GENERIC steps pair positionally with the immediately preceding PLANNER_RESPONSE tool calls; workspace root and parent session resolve read-only from sibling conversation_summaries.db.",
+  "detect": [
+    [
+      {
+        "pointer": "/step_index",
+        "type": "number"
+      },
+      {
+        "pointer": "/type",
+        "type": "string"
+      },
+      {
+        "pointer": "/source",
+        "type": "string"
+      }
+    ]
+  ],
+  "timestamp": [
+    "/created_at"
+  ],
+  "correlation": {
+    "external_message_id": [
+      {
+        "pointer": "/step_index",
+        "prefix": "step-"
+      }
+    ]
+  },
+  "ancestry": {
+    "linear": true
+  },
+  "session": {
+    "external_id": [
+      "/conversation_id"
+    ],
+    "cwd": [
+      "/cwd"
+    ],
+    "when": [
+      {
+        "pointer": "/conversation_id",
+        "type": "string"
+      }
+    ],
+    "parent": [
+      "/parent_conversation_id"
+    ],
+    "parent_when": [
+      {
+        "pointer": "/parent_conversation_id",
+        "type": "string"
+      }
+    ]
+  },
+  "pairing": "positional",
+  "representations": [],
+  "records": [
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "USER_INPUT"
+        },
+        {
+          "pointer": "/source",
+          "equals": "USER_EXPLICIT"
+        }
+      ],
+      "emit": "user_message",
+      "text": "/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "USER_INPUT"
+        }
+      ],
+      "emit": "user_message",
+      "origin": "harness",
+      "channel": "injected",
+      "purpose": "injected_input",
+      "text": "/content"
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "PLANNER_RESPONSE"
+        }
+      ],
+      "emit": "multi",
+      "events": [
+        {
+          "when": [
+            {
+              "pointer": "/thinking",
+              "type": "string"
+            },
+            {
+              "pointer": "/thinking",
+              "not_equals": ""
+            }
+          ],
+          "emit": "reasoning",
+          "origin": "assistant",
+          "text": "/thinking"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/content",
+              "type": "string"
+            },
+            {
+              "pointer": "/content",
+              "not_equals": ""
+            }
+          ],
+          "emit": "assistant_message",
+          "text": "/content"
+        },
+        {
+          "when": [
+            {
+              "pointer": "/tool_calls",
+              "type": "array"
+            }
+          ],
+          "emit": "each",
+          "each": "/tool_calls",
+          "rules": [
+            {
+              "emit": "tool_call",
+              "tool": "/name",
+              "input": "/args"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "GENERIC"
+        }
+      ],
+      "emit": "tool_result",
+      "content": "/content",
+      "failed_when": [
+        {
+          "pointer": "/status",
+          "in": [
+            "ERROR",
+            "FAILED",
+            "CANCELED",
+            "CANCELLED"
+          ]
+        }
+      ],
+      "succeeded_when": [
+        {
+          "pointer": "/status",
+          "equals": "DONE"
+        }
+      ]
+    },
+    {
+      "when": [
+        {
+          "pointer": "/type",
+          "equals": "SYSTEM_MESSAGE"
+        }
+      ],
+      "emit": "instruction",
+      "origin": "system",
+      "channel": "injected",
+      "purpose": "system_message",
+      "text": "/content"
+    }
+  ],
+  "tools": {
+    "read_file": {
+      "operation": "file_read",
+      "path": "/Path"
+    },
+    "edit_file": {
+      "operation": "file_edit",
+      "path": "/Path"
+    },
+    "write_file": {
+      "operation": "file_edit",
+      "path": "/Path"
+    },
+    "run_command": {
+      "operation": "command",
+      "command": "/CommandLine"
+    }
+  },
+  "guarantees": {
+    "user_messages": "exact",
+    "assistant_messages": "exact",
+    "tool_calls": "exact",
+    "tool_results": "exact",
+    "file_reads": "supported_tools_only",
+    "file_edits": "supported_tools_only",
+    "commands": "supported_tools_only",
+    "shell_side_effects": "unsupported"
+  }
+}

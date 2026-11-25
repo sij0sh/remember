@@ -8,7 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from support import invoke
-ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+            "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 
 
 def call(mid, parent, name, path, error=None, content="x = 1\n"):
@@ -54,7 +55,8 @@ class Fixture(unittest.TestCase):
         (self.repo / "b.py").write_text("y = 1\n")
         self.settings = home / "settings.json"
         self.settings.write_text(json.dumps({"recordings": {
-            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)]}}))
+            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)],
+            "dsh": [str(empty)], "antigravity": [str(empty)]}}))
 
     def session(self, sid, rows, stamp):
         head = {"type": "session", "id": sid, "cwd": str(self.repo), "timestamp": stamp}

@@ -9,13 +9,14 @@ from pathlib import Path
 
 from .profiles import PROFILES, detected, recorded_root, windows_path
 from .records import new_scope, records
-from . import zstd
+from . import antigravity, zstd
 
 # Default archive locations per harness; settings.json at the skill root overrides them.
 SETTINGS = Path(os.environ.get("TRACE_SESSIONS_SETTINGS")
                 or Path(__file__).resolve().parents[2] / "settings.json")
 FALLBACK_RECORDINGS = {"pi": ["~/.pi/agent/sessions"], "codex": ["~/.codex/sessions"],
-                       "claude-code": ["~/.claude/projects"], "dsh": ["~/.dsh/sessions"]}
+                       "claude-code": ["~/.claude/projects"], "dsh": ["~/.dsh/sessions"],
+                       "antigravity": ["~/.gemini/antigravity-cli/brain", "~/.gemini/antigravity/brain"]}
 
 
 def header(path, max_record, max_scan, harness=None):
@@ -26,8 +27,10 @@ def header(path, max_record, max_scan, harness=None):
         if value:
             harness = harness or detected(value)
             root = root or (recorded_root(value, harness) if harness else None)
-            if harness and root:
+            if harness and (root or harness == "antigravity"):
                 break
+    if harness == "antigravity" and not root:
+        root = antigravity.session_metadata(path).get("root")
     return harness, root, scope["bytes_scanned"]
 
 
@@ -122,9 +125,15 @@ def candidate_files(options, scope, roots=None):
             add(label, path, explicit=True)
         elif path.is_dir():
             for base, dirs, files in os.walk(path, followlinks=False):
-                dirs[:] = sorted(d for d in dirs if not Path(base, d).is_symlink() and d not in (".git", "node_modules", ".venv"))
+                base_path = Path(base)
+                skip_chunks = base_path.name == "logs" and base_path.parent.name == ".system_generated"
+                dirs[:] = sorted(d for d in dirs if not Path(base, d).is_symlink()
+                                 and d not in (".git", "node_modules", ".venv")
+                                 and not (skip_chunks and d == "chunks"))
                 for name in sorted(files):
-                    add(label, Path(base, name))
+                    candidate = Path(base, name)
+                    if not antigravity.is_noncanonical(candidate):
+                        add(label, candidate)
         else:
             raise ValueError(f"Missing file/directory: {path}")
     scope["candidates_found"] = sum(map(len, candidates.values()))
@@ -155,9 +164,14 @@ def candidate_files(options, scope, roots=None):
             scope["header_bytes_scanned"] += read
             recognized = harness is not None
             harness = harness or label or "unknown"
+            file_roots = [root] if root else []
+            if harness == "antigravity":
+                extra = antigravity.session_metadata(name).get("roots") or []
+                file_roots = list(dict.fromkeys([*file_roots, *extra]))
             if roots is not None and recognized:
-                seen_root = roots.setdefault((harness, root and normalized_root(root)), [0, mtime])
-                seen_root[0] += 1
+                for entry_root in (file_roots or [None]):
+                    seen_root = roots.setdefault((harness, entry_root and normalized_root(entry_root)), [0, mtime])
+                    seen_root[0] += 1
             selected.setdefault(harness, [])
             counts = group_scopes.setdefault(harness, dict(zero))
             if options.project:
@@ -165,11 +179,11 @@ def candidate_files(options, scope, roots=None):
                     # Not a recording in any known format (such as a tool's own JSONL in an archive).
                     counts["files_unrecognized"] += 1
                     continue
-                if not root:
+                if not file_roots:
                     counts["project_unknown"] += 1
                     unrooted.setdefault(harness, []).append(name)
                     continue
-                if normalized_root(root) not in wanted:
+                if not any(normalized_root(r) in wanted for r in file_roots):
                     counts["files_excluded_project"] += 1
                     continue
             selected[harness].append(name)

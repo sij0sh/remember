@@ -81,7 +81,8 @@ def _read(op, path, call, result, cache):
         text = None
     view = read_view(op.get("harness"), _record(cache, result), text, arguments)
     row = _base(op, path, "read_result")
-    row["request"] = {k: arguments.get(k) for k in ("offset", "limit") if arguments.get(k) is not None}
+    row["request"] = {k: arguments.get(k) for k in ("offset", "limit", "StartLine", "EndLine", "ByteOffset")
+                      if arguments.get(k) is not None}
     if not view:
         return {**row, "adapter": f"{op.get('harness')}:unrecognized"}
     return _content(row, view["content"], **{k: view[k] for k in (
@@ -106,7 +107,7 @@ def _edit(op, path, events, cache, base):
             continue
         change, source, hunks, original, after, truncated = found
         whole = op.get("tool") in ("Write", "write") or change in ("add", "write")
-        if not truncated and not whole and not isinstance(original, str) and isinstance(base, str):
+        if not truncated and not whole and change != "append" and not isinstance(original, str) and isinstance(base, str):
             # Recorded pre-edit file (Claude originalFile) or an earlier complete observation.
             after = edit_hunks.replay(base, hunks)
         if isinstance(after, str) and not truncated:

@@ -260,8 +260,40 @@ def _dsh(event, record):
     return ("update", "dsh_edit_arguments", [(0, old_count, 0, new_count, lines)], None, None, 0), None
 
 
+def _antigravity(event, record):
+    arguments = pointer(record, event.get("payload_pointer"))
+    if not isinstance(arguments, dict):
+        return None, "no_structured_result"
+    if event.get("tool") == "write_file":
+        content = arguments.get("Content")
+        if not isinstance(content, str):
+            return None, "no_structured_result"
+        if arguments.get("Append"):
+            added = split_lines(content)
+            if not added:
+                return None, "no_change"
+            return ("append", "antigravity_write_append",
+                    [(0, 0, 0, len(added), ["+" + line for line in added])], None, None, 0), None
+        return ("write", "antigravity_write_content", _whole(content, "+"), None, content, 0), None
+    old, new = arguments.get("Target"), arguments.get("Replacement")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return None, "no_structured_result"
+    before, after = split_lines(old), split_lines(new)
+    lines, old_count, new_count = [], 0, 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=before, b=after, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        lines.extend("-" + line for line in before[i1:i2])
+        lines.extend("+" + line for line in after[j1:j2])
+        old_count, new_count = old_count + i2 - i1, new_count + j2 - j1
+    if not lines:
+        return None, "no_change"
+    return ("update", "antigravity_edit_arguments", [(0, old_count, 0, new_count, lines)], None, None, 0), None
+
+
 SUPPORTED_TOOLS = {"claude-code": {"Edit", "MultiEdit", "Write", "NotebookEdit"},
-                   "pi": {"edit", "write"}, "dsh": {"edit", "write"}}
+                   "pi": {"edit", "write"}, "dsh": {"edit", "write"},
+                   "antigravity": {"edit_file", "write_file"}}
 
 
 def _supported(event):
@@ -283,6 +315,8 @@ def _extractor(event):
         return _pi
     if harness == "dsh" and kind == "tool_call" and tool in ("edit", "write"):
         return _dsh
+    if harness == "antigravity" and kind == "tool_call" and tool in ("edit_file", "write_file"):
+        return _antigravity
     return None
 
 

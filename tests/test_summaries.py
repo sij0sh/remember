@@ -444,7 +444,8 @@ class RetrievalTests(unittest.TestCase):
 
     def investigate(self, repo, archive, goal="Fix tests"):
         env = {name: None for name in ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID",
-                                       "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")}
+                                       "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+                                       "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")}
         return invoke(["investigate", goal, "--repo", str(repo), "--recordings", str(archive)],
                       env=env).json()
 
@@ -470,7 +471,8 @@ class RetrievalTests(unittest.TestCase):
                                       "publishedAtLeafId": "m3"}, STRUCTURED))
         write(archive / "s.jsonl", rows)
         env = {name: None for name in ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID",
-                                       "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")}
+                                       "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+                                       "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")}
         output = invoke(["query", "SELECT section, status, text FROM summary_items WHERE section='verificationState' "
                                    "ORDER BY ordinal", "--repo", str(repo), "--recordings", str(archive)],
                         env=env).json()

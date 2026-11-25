@@ -5,6 +5,7 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+from . import antigravity
 from .discovery import default_recordings
 from .records import new_scope, records, safe_ref
 
@@ -19,12 +20,15 @@ LONG_HEX = re.compile(r"\b[0-9a-f]{41,}\b")
 
 
 def recording_id(file):
-    """The session id a recording carries: its file name, else its session directory (dsh)."""
+    """The session id a recording carries: its file name, else its session directory (dsh, antigravity)."""
     path = Path(file)
     for candidate in (path.name, path.parent.name):
         found = re.findall(UUID, candidate)
         if found:
             return found[-1]
+    found = antigravity.conversation_id(path)
+    if found:
+        return found
     return path.stem
 
 
@@ -46,7 +50,7 @@ def _recording(rid):
         for root in paths:
             if root.is_dir():
                 found.extend(p for pattern in ("*.jsonl", "*.jsonl.zstd") for p in root.rglob(pattern)
-                             if not p.is_symlink() and recording_id(p) == rid)
+                             if not p.is_symlink() and not antigravity.is_noncanonical(p) and recording_id(p) == rid)
     unique = sorted({str(p.absolute()) for p in found})
     if not unique:
         raise ValueError(f"No recording named {rid} under the configured recordings; pass the JSON ref instead")

@@ -6,6 +6,8 @@ import posixpath
 import re
 from pathlib import Path
 
+from . import antigravity
+
 PROFILE_DIR = Path(__file__).resolve().parents[1] / "profiles"
 
 
@@ -51,6 +53,8 @@ def field(spec, item, key=None):
         return value[-1] if value else None
     if spec.get("join") == "text_blocks":
         return content_text(value)
+    if value is not None and "prefix" in spec:
+        return f"{spec['prefix']}{value}"
     return value
 
 
@@ -266,4 +270,6 @@ def read_view(harness, record, text, arguments):
                 "completeness": "complete" if complete else "truncated" if truncated
                 else "range" if ranged and start else "unknown",
                 "adapter": "dsh:read_file"}
+    if harness == "antigravity" and isinstance(text, str):
+        return antigravity.read_view(text, arguments)
     return None

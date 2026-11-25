@@ -4,7 +4,7 @@
 
 You probably already know why a memory system is essential to a harness. There are many solutions out there as is, but most come with their own can of worms. A second system requires maintaince and can do more harm than good when it gets one detail wrong or if they attempt to hold the harness's hand too much.
 
-remember skips the notes. Each call rebuilds a SQLite database from what already exists: current source, Git history, and the session recordings your harness writes (pi, Codex, Claude Code, DeepSeek Harness). The agent asks its own questions. Nothing is stored to keep in sync.
+remember skips the notes. Each call rebuilds a SQLite database from what already exists: current source, Git history, and the session recordings your harness writes (pi, Codex, Claude Code, DeepSeek Harness, Antigravity). The agent asks its own questions. Nothing is stored to keep in sync.
 
 ```mermaid
 flowchart LR
@@ -177,7 +177,7 @@ dsh `.jsonl.zstd` recordings need a zstd decoder: Python 3.14+ includes one; on 
 
 | Setting | Default | Purpose |
 |---|---|---|
-| Recording roots | `settings.json` | Locations of pi, Codex, Claude Code and DeepSeek Harness JSONL recordings; dsh logs are `.jsonl.zstd` and need a zstd decoder |
+| Recording roots | `settings.json` | Locations of pi, Codex, Claude Code, DeepSeek Harness and Antigravity JSONL recordings; dsh logs are `.jsonl.zstd` and need a zstd decoder |
 | Graph cache | `$XDG_CACHE_HOME/remember` or `~/.cache/remember` | One source snapshot per repository, replaced when source changes; idle repositories deleted after 14 days |
 | Exclusions | Built-in defaults plus `.rememberignore` | Globs excluded from capture |
 | Capture limits | 20,000 files, 1 MiB per file, 32 MiB total | Bounds for one capture |

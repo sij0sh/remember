@@ -78,7 +78,7 @@ class DiscoveryUnavailable(ValueError):
 
 # Harness-exported current-session ids. Claude Code exports CLAUDE_CODE_SESSION_ID.
 SESSION_ENV = ("CODEX_THREAD_ID", "PI_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
-               "DSH_SESSION_ID")
+               "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 
 
 def env_sessions():

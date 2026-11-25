@@ -3,6 +3,7 @@
     "pi": ["~/.pi/agent/sessions"],
     "codex": ["~/.codex/sessions"],
     "claude-code": ["~/.claude/projects"],
-    "dsh": ["~/.dsh/sessions"]
+    "dsh": ["~/.dsh/sessions"],
+    "antigravity": ["~/.gemini/antigravity-cli/brain", "~/.gemini/antigravity/brain"]
   }
 }

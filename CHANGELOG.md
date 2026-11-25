@@ -2,6 +2,14 @@
 
 One entry per release. A release bumps `VERSION` and adds one entry here.
 
+## [0.5.23] - unreleased
+
+- Google Antigravity support: `antigravity` profile (v1) for `transcript_full.jsonl` under `~/.gemini/antigravity-cli/brain` and `~/.gemini/antigravity/brain`, added to `settings.json` and the default recording roots.
+- Linear `step-N` ancestry; tool results pair positionally with the preceding `PLANNER_RESPONSE.tool_calls`; dispatch `exit_code` is read from `Command exited with code N` and status decides the outcome.
+- `read_file`/`edit_file`/`write_file` adapters: `Showing lines a-b of n` ranges, `Target`/`Replacement` hunks, `Content` writes and `Append` edits; exit-code and range markers never leak into payload text.
+- Compact `transcript.jsonl` and `chunks/` duplicates are skipped during discovery and citation lookup; workspace roots, multi-root and parent-session links come read-only from sibling `conversation_summaries.db` (WAL-aware static open), with `history.jsonl` as fallback.
+- `ANTIGRAVITY_CONVERSATION_ID` excludes the current session; `<user_request>` is prose while `additional_metadata`, `user_settings_change` and `system_message` are harness context.
+
 ## [0.5.22] - unreleased
 
 - Merge `origin/main`: lint job with `ruff.toml`, CI matrix, Dependabot, architecture overview and workflow tables from the shared foundation.

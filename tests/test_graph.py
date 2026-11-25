@@ -445,7 +445,7 @@ class GraphTests(GraphCase):
         empty.mkdir()
         settings = self.home / "settings.json"
         settings.write_text(json.dumps({"recordings": {name: [str(empty)]
-                                                       for name in ("pi", "codex", "claude-code")}}))
+                                                       for name in ("pi", "codex", "claude-code", "dsh", "antigravity")}}))
         proc = subprocess.run([sys.executable, str(ROOT/"scripts/remember.py"),
                                "--repo", str(self.repo), "--cache", str(self.cache)],
                               capture_output=True, text=True, timeout=20,

@@ -10,7 +10,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from helper.file_observations import read_pairs, sha
 from helper.profiles import read_view
 from support import invoke
-ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+            "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 
 
 def pi_call(mid, parent, name, arguments, text, details=None):
@@ -66,7 +67,8 @@ class ObservationCliTests(unittest.TestCase):
         (self.repo / "a.py").write_text("x = 1\n")
         self.settings = home / "settings.json"
         self.settings.write_text(json.dumps({"recordings": {
-            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)]}}))
+            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)],
+            "dsh": [str(empty)], "antigravity": [str(empty)]}}))
         rows = [{"type": "message", "id": "u1", "parentId": None,
                  "message": {"role": "user", "content": "Tidy a.py"}},
                 *pi_call("r1", "u1", "read", {"path": "a.py"}, "x = 1\n"),

@@ -10,7 +10,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from helper import message_segments as ms
 from support import invoke
 
-ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+            "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 SKILL = ('<skill name="guide" location="/skills/guide/SKILL.md">\n'
          + "You must never push without review. Always run the linter.\n" * 60 + "</skill>")
 

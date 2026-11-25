@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from . import antigravity
 from .profiles import (PROFILES, content_text, detected, field, first, interpret,
                        matches, pointer, recorded_root, resolve_path, stamp)
 from .records import records, safe_ref  # re-exported for existing callers
@@ -148,6 +149,21 @@ def scan_file(path, options, scope, ranges=None):
         harness, hinted_root, _ = header(path, options.max_record_bytes, min(262144, options.max_scan_bytes))
         if harness:
             profile, root = PROFILES[harness], hinted_root
+    elif options.harness in PROFILES:
+        profile = PROFILES[options.harness]
+    ag_meta_loaded = False
+
+    def load_antigravity_meta():
+        nonlocal ag_meta_loaded, root, external_sid, parent_session
+        if ag_meta_loaded or not profile or profile["harness"] != "antigravity":
+            return
+        ag_meta_loaded = True
+        meta = antigravity.session_metadata(path)
+        root = root or meta["root"]
+        external_sid = external_sid or meta["session"]
+        parent_session = parent_session or meta["parent_session"]
+
+    load_antigravity_meta()
     # Only small projections survive a record; payloads remain in the source.
     linear_parent = None
     # Recorded ancestry of every readable record, including records with no projected event
@@ -163,6 +179,7 @@ def scan_file(path, options, scope, ranges=None):
             harness = options.harness if options.harness != "auto" else detected(record)
             if profile is None and harness:
                 profile = PROFILES[harness]
+                load_antigravity_meta()
             root = root or recorded_root(record, profile and profile["harness"])
         local = 0
         record_parent = None
@@ -325,6 +342,10 @@ def scan_file(path, options, scope, ranges=None):
             if kind == "tool_result":
                 payload_ptr = ptr + rule.get("content", "/content")
                 text = content_text(pointer(record, payload_ptr))
+                if profile["harness"] == "antigravity":
+                    raw_code = antigravity.extract_exit_code(text)
+                    if raw_code is not None:
+                        kwargs["_ag_exit_code"] = raw_code
             if kind in ("command", "file_read", "file_edit"):
                 if kind == "command":
                     text = kwargs.get("command", "")
@@ -592,27 +613,58 @@ def scan_file(path, options, scope, ranges=None):
             parent = result_parents[parent]
         return parent == message_id
 
-    for e in events:
-        if e["kind"] != "tool_result":
-            continue
-        candidates = calls.get(e.get("call_id"), [])
-        if len(candidates) == 1 and candidates[0]["order"] <= e["order"]:
-            call = candidates[0]
-            if "result_ref" in call or (e.get("external_parent_id") and call.get("external_message_id")
-                                        and not recorded_under(e, call["external_message_id"])):
-                scope["unpaired_results"] += 1
-                continue
-            call["result_ref"] = e["ref"]
-            call["outcome"] = e["outcome"]
-            if "exit_code" in e:
-                call["exit_code"] = e["exit_code"]
-            e["call_ref"] = call["ref"]
-            for k in ("operation", "tool", "path", "path_raw", "path_location", "command", "request_ref",
-                      "request_basis", "request_origin", "turn", "lane"):
-                if k in call:
-                    e[k] = call[k]
+    def link(call, result):
+        if profile and profile["harness"] == "antigravity" and call.get("operation") == "command":
+            code, outcome = antigravity.command_result(result.pop("_ag_exit_code", None), result.get("outcome"))
+            result["outcome"] = outcome
+            if code is not None:
+                result["exit_code"] = code
         else:
-            scope["unpaired_results"] += 1
+            result.pop("_ag_exit_code", None)
+        call["result_ref"] = result["ref"]
+        call["outcome"] = result["outcome"]
+        if "exit_code" in result:
+            call["exit_code"] = result["exit_code"]
+        result["call_ref"] = call["ref"]
+        for k in ("operation", "tool", "path", "path_raw", "path_location", "command", "request_ref",
+                  "request_basis", "request_origin", "turn", "lane"):
+            if k in call:
+                result[k] = call[k]
+
+    if profile and profile.get("pairing") == "positional":
+        pending, batch_offset, batch_tail = [], None, None
+        for e in events:
+            in_tail = e["ref"].get("line") is None
+            if batch_tail is not None and in_tail != batch_tail:
+                pending, batch_offset, batch_tail = [], None, None
+            if e["kind"] == "tool_call":
+                if e["byte_offset"] != batch_offset:
+                    pending, batch_offset, batch_tail = [], e["byte_offset"], in_tail
+                pending.append(e)
+            elif e["kind"] == "tool_result":
+                if pending and pending[0]["order"] <= e["order"]:
+                    link(pending.pop(0), e)
+                else:
+                    e.pop("_ag_exit_code", None)
+                    scope["unpaired_results"] += 1
+            elif e["kind"] in ("user_message", "assistant_message", "reasoning", "gap") and e["byte_offset"] != batch_offset:
+                pending, batch_offset, batch_tail = [], None, None
+    else:
+        for e in events:
+            if e["kind"] != "tool_result":
+                continue
+            candidates = calls.get(e.get("call_id"), [])
+            if len(candidates) == 1 and candidates[0]["order"] <= e["order"]:
+                call = candidates[0]
+                if "result_ref" in call or (e.get("external_parent_id") and call.get("external_message_id")
+                                            and not recorded_under(e, call["external_message_id"])):
+                    e.pop("_ag_exit_code", None)
+                    scope["unpaired_results"] += 1
+                    continue
+                link(call, e)
+            else:
+                e.pop("_ag_exit_code", None)
+                scope["unpaired_results"] += 1
     scope["calls_without_result"] += sum(e["kind"] == "tool_call" and "result_ref" not in e for e in events)
     return {"file": str(Path(path).absolute()), "session": sid, "parent_session": parent_session, "root": root,
             "harness_version": version, "sampled": bool(ranges),

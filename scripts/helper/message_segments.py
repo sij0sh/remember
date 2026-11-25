@@ -25,10 +25,11 @@ MESSAGE_KINDS = ("user_message", "assistant_message")
 
 # Allowlisted wrappers. Reference blocks (skills) must open at a line start; harness tags may open anywhere.
 REFERENCE_TAGS = frozenset({"skill"})
-HARNESS_TAGS = frozenset({"system-reminder", "user-prompt-submit-hook", "task-notification"})
+HARNESS_TAGS = frozenset({"system-reminder", "user-prompt-submit-hook", "task-notification",
+                          "additional_metadata", "user_settings_change", "system_message"})
 HARNESS_PREFIXES = ("command-", "local-command-", "bash-")
 # The user's own typed arguments inside a harness command wrapper are prose.
-PROSE_TAGS = frozenset({"command-args"})
+PROSE_TAGS = frozenset({"command-args", "user_request"})
 _OPEN = re.compile(r"<([a-zA-Z][\w-]*)(?:\s[^<>]*)?>")
 _FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})")
 
@@ -86,9 +87,11 @@ def _wrappers(text):
             spans.append(("unknown", at, size, "unclosed_wrapper", name))
             break
         if kind == "prose":
-            spans.append(("harness_context", at, match.end(), "command_wrapper", name))
-            spans.append(("prose", match.end(), close, "command_args", name))
-            spans.append(("harness_context", close, close + len(close_tag), "command_wrapper", name))
+            wrap_basis = "command_wrapper" if name == "command-args" else f"{name}_wrapper"
+            body_basis = "command_args" if name == "command-args" else name
+            spans.append(("harness_context", at, match.end(), wrap_basis, name))
+            spans.append(("prose", match.end(), close, body_basis, name))
+            spans.append(("harness_context", close, close + len(close_tag), wrap_basis, name))
         else:
             spans.append((kind, at, close + len(close_tag), f"{name}_tag" if kind == "reference" else "harness_tag",
                           name))

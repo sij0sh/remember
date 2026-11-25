@@ -8,7 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 from support import invoke
-ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+            "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 
 
 class OrientationTests(unittest.TestCase):
@@ -22,7 +23,8 @@ class OrientationTests(unittest.TestCase):
             d.mkdir()
         self.settings = self.home / "settings.json"
         self.settings.write_text(json.dumps({"recordings": {
-            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)]}}))
+            "pi": [str(self.archive)], "codex": [str(empty)], "claude-code": [str(empty)],
+            "dsh": [str(empty)], "antigravity": [str(empty)]}}))
         self.write("a.py", "def target():\n    return 2\n")
 
     def write(self, path, text):

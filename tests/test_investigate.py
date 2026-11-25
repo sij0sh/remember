@@ -12,7 +12,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from helper.recording_scan import schedule
 from support import TS_PARSER, invoke
 
-ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+ENV_DROP = ("PI_SESSION_FILE", "PI_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID",
+            "DSH_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 
 
 class InvestigateTests(unittest.TestCase):
