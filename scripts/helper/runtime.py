@@ -224,7 +224,19 @@ class Runtime:
                                     "history": "disabled sessions" if args.no_sessions else "target-scoped"}})
         graph = graph_cli.get_graph(self.store, args)
         matches = graph.resolve(args.target)
-        if len(matches) != 1:
+        unindexed_path = None
+        if not matches and "::" not in args.target and not args.target.startswith(("snapshot:", "node:")):
+            try:
+                rel = target_history.relative(args.target)
+            except ValueError:
+                rel = None
+            if rel:
+                root_path = Path(self.store.root)
+                candidate = root_path / rel
+                if (candidate.is_file() and not candidate.is_symlink()
+                        and not any(p.is_symlink() for p in candidate.parents if p != root_path and root_path in p.parents)):
+                    unindexed_path = rel
+        if len(matches) != 1 and unindexed_path is None:
             candidates = [graph.public(graph.nodes[n]) for n in matches]
             argv = continuations.replace_option(self.base_argv(), '--snapshot', graph.snapshot)
             at = argv.index(args.target, 1) if args.target in argv[1:] else None
@@ -239,38 +251,57 @@ class Runtime:
                            "coverage": {"target": {"complete": False, "reason": "ambiguous" if matches else "unresolved",
                                                    "candidates": len(candidates)}},
                            "next": choices})
-        node = graph.public(graph.nodes[matches[0]])
-        if node['kind'] not in ('file', 'symbol'):
-            raise ValueError("inspect requires a file or symbol; use map for a directory")
-        pinned = copy.copy(args)
-        pinned.snapshot, pinned.target = graph.snapshot, node['ref']
-        rows, steps, coverage = [], [], {}
-        src = next(r for r in graph.body['source']['files'] if r['path'] == node['path'])
-        require_current(graph.snapshot, src)
-        text = (src.get('text') or '').splitlines()
-        start, end = node.get('line') or 1, node.get('end_line') or len(text)
-        source_ref = reference(graph.snapshot, 'source', node['path'])
-        rows.append({"section": "source", "path": node['path'], "line": start,
-                     "text": '\n'.join(text[start-1:min(end, start+PREVIEW_LINES-1)]), "ref": source_ref,
-                     "text_complete": src.get('text') is not None and end < start+PREVIEW_LINES})
-        steps += [{"stage": "resolve", "state": "completed"}, {"stage": "source", "state": "completed"}]
-        deadline.check()
-        if args.intent == 'change':
-            rel = impact(graph, [node['ref']], depth=args.depth, max_nodes=args.max_nodes, seconds=deadline.remaining())
-            rows += [{"section": "relationships", **r} for r in rel['results']]
-            rel_incomplete = graph_cli.incomplete(rel, graph)
+        if unindexed_path is not None:
+            node = {"kind": "file", "path": unindexed_path, "ref": f"file:{unindexed_path}", "unindexed": True}
+            pinned = copy.copy(args)
+            pinned.snapshot, pinned.target = graph.snapshot, unindexed_path
+            rows, steps, coverage = [], [], {}
+            raw_bytes = (Path(self.store.root) / unindexed_path).read_bytes()[:args.max_file_bytes]
+            src_text = raw_bytes.decode("utf-8", "replace") if b"\0" not in raw_bytes[:8192] else None
+            src = {"path": unindexed_path, "text": src_text}
+            text = (src_text or "").splitlines()
+            start, end = 1, len(text)
+            source_ref = None
+            rows.append({"section": "source", "path": unindexed_path, "line": start,
+                         "text": '\n'.join(text[start-1:min(end, start+PREVIEW_LINES-1)]), "ref": node["ref"],
+                         "text_complete": src_text is not None and end < start+PREVIEW_LINES})
+            steps += [{"stage": "resolve", "state": "completed"}, {"stage": "source", "state": "completed"}]
+            coverage['relationships'] = {"complete": True, "gaps": [], "scope": "unindexed_repo_file",
+                                         "meaning": "file is outside the static graph index (e.g. gitignored .agents/ path)"}
+            steps.append({"stage": "relationships", "state": "skipped"})
         else:
-            grain = 'symbol' if node['kind'] == 'symbol' else 'file'
-            found, limits = graph.walk(graph.seeds(node['ref'], grain), 'both', DEPENDENCIES, grain,
-                                       args.depth, args.max_nodes, seconds=deadline.remaining())
-            rows += [{"section": "relationships", **r} for r in found]
-            rel = graph.document('relationships', found, traversal=limits)
-            if limits['bounds']:
-                rel['gaps'] = [*rel['gaps'], {"area": "traversal", "reason": "bounded"}]
-            rel_incomplete = graph_cli.incomplete(rel, graph)
-        coverage['relationships'] = {"complete": not rel_incomplete, "gaps": rel_incomplete,
-                                     "meaning": "static potential relationships; absence is not proof of safety"}
-        steps.append({"stage": "relationships", "state": "bounded" if rel_incomplete else "completed"})
+            node = graph.public(graph.nodes[matches[0]])
+            if node['kind'] not in ('file', 'symbol'):
+                raise ValueError("inspect requires a file or symbol; use map for a directory")
+            pinned = copy.copy(args)
+            pinned.snapshot, pinned.target = graph.snapshot, node['ref']
+            rows, steps, coverage = [], [], {}
+            src = next(r for r in graph.body['source']['files'] if r['path'] == node['path'])
+            require_current(graph.snapshot, src)
+            text = (src.get('text') or '').splitlines()
+            start, end = node.get('line') or 1, node.get('end_line') or len(text)
+            source_ref = reference(graph.snapshot, 'source', node['path'])
+            rows.append({"section": "source", "path": node['path'], "line": start,
+                         "text": '\n'.join(text[start-1:min(end, start+PREVIEW_LINES-1)]), "ref": source_ref,
+                         "text_complete": src.get('text') is not None and end < start+PREVIEW_LINES})
+            steps += [{"stage": "resolve", "state": "completed"}, {"stage": "source", "state": "completed"}]
+            deadline.check()
+            if args.intent == 'change':
+                rel = impact(graph, [node['ref']], depth=args.depth, max_nodes=args.max_nodes, seconds=deadline.remaining())
+                rows += [{"section": "relationships", **r} for r in rel['results']]
+                rel_incomplete = graph_cli.incomplete(rel, graph)
+            else:
+                grain = 'symbol' if node['kind'] == 'symbol' else 'file'
+                found, limits = graph.walk(graph.seeds(node['ref'], grain), 'both', DEPENDENCIES, grain,
+                                           args.depth, args.max_nodes, seconds=deadline.remaining())
+                rows += [{"section": "relationships", **r} for r in found]
+                rel = graph.document('relationships', found, traversal=limits)
+                if limits['bounds']:
+                    rel['gaps'] = [*rel['gaps'], {"area": "traversal", "reason": "bounded"}]
+                rel_incomplete = graph_cli.incomplete(rel, graph)
+            coverage['relationships'] = {"complete": not rel_incomplete, "gaps": rel_incomplete,
+                                         "meaning": "static potential relationships; absence is not proof of safety"}
+            steps.append({"stage": "relationships", "state": "bounded" if rel_incomplete else "completed"})
         deadline.check()
         # One scheduled scan feeds both the packet and target history.
         providers = Providers(pinned, self.store, deadline)
@@ -319,7 +350,7 @@ class Runtime:
             recover = self.recovery(argv, "Rescan target history with wider recording limits")
             if recover:
                 next_items.append(recover)
-        if src.get('text') is not None and end >= start+PREVIEW_LINES:
+        if source_ref and src.get('text') is not None and end >= start+PREVIEW_LINES:
             next_items.append(continuations.encode(
                 ['show', source_ref, '--start-line', str(start+PREVIEW_LINES), '--lines', str(end-start-PREVIEW_LINES+1),
                  '--repo', self.store.root, '--cache', str(self.store.path.parent)], None,
@@ -387,8 +418,6 @@ class Runtime:
             by_event.setdefault((witness.get("recording_id"), witness.get("event_id")), []).append(witness)
         selected = []
         for row in operations:
-            if row.get("path") != path or row.get("path_location") != "repository":
-                continue
             if providers.repo_path(row) != path:
                 continue
             if symbol_events is not None:

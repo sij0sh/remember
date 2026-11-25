@@ -163,7 +163,8 @@ def _later_gap(selected, checkpoint):
             "refs": [event["ref"] for event in events[:2]]}
 
 
-def _operation_rows(operations, witnesses):
+def _operation_rows(operations, witnesses, by_ref=None):
+    from .investigate import _failure_excerpt
     by_operation, by_witness = {}, {}
     for row in operations:
         by_operation.setdefault(row.get("operation_id"), []).append(row)
@@ -180,23 +181,62 @@ def _operation_rows(operations, witnesses):
         unique = {}
         for witness in by_witness.get(operation_id, []):
             unique[witness.get("witness_id")] = witness
-        rows.append({"section": "operation", "operation_id": operation_id,
-                     "lane": base.get("lane"), "branch": base.get("branch"), "order": base.get("order"),
-                     "timestamp": base.get("timestamp"), "tool": base.get("tool"),
-                     "action": base.get("action"), "pairing": base.get("pairing"),
-                     "outcome": base.get("outcome"), "interpretation": base.get("interpretation"),
-                     "basis": base.get("basis"), "ref": base.get("call_ref") or base.get("result_ref"),
-                     "paths": paths[:8],
-                     "path_locations": locations[:8], "command": (base.get("command") or "")[:300] or None,
-                     "call_ref": base.get("call_ref"),
-                     "result_ref": base.get("result_ref"),
-                     "commits": [{"witness_id": w.get("witness_id"), "sha": w.get("sha"),
-                                  "recorded_sha": w.get("recorded_sha"), "basis": w.get("basis"),
-                                  "confidence": w.get("confidence"), "resolution": w.get("resolution"),
-                                  "failed": w.get("failed"), "subject": w.get("subject")}
-                                 for w in unique.values()]})
+        reason = None
+        if base.get("outcome") == "failed" and by_ref:
+            result_ev = by_ref.get(_key(base.get("result_ref")))
+            if result_ev:
+                detail = message_segments.visible(result_ev.get("text") or "")
+                if detail:
+                    reason = _failure_excerpt(detail)
+        row = {"section": "operation", "operation_id": operation_id,
+               "lane": base.get("lane"), "branch": base.get("branch"), "order": base.get("order"),
+               "timestamp": base.get("timestamp"), "tool": base.get("tool"),
+               "action": base.get("action"), "pairing": base.get("pairing"),
+               "outcome": base.get("outcome"), "interpretation": base.get("interpretation"),
+               "basis": base.get("basis"), "ref": base.get("call_ref") or base.get("result_ref"),
+               "paths": paths[:8],
+               "path_locations": locations[:8], "command": (base.get("command") or "")[:300] or None,
+               "call_ref": base.get("call_ref"),
+               "result_ref": base.get("result_ref"),
+               "commits": [{"witness_id": w.get("witness_id"), "sha": w.get("sha"),
+                            "recorded_sha": w.get("recorded_sha"), "basis": w.get("basis"),
+                            "confidence": w.get("confidence"), "resolution": w.get("resolution"),
+                            "failed": w.get("failed"), "subject": w.get("subject")}
+                           for w in unique.values()]}
+        if reason:
+            row["reason"] = reason
+        rows.append(row)
     rows.sort(key=lambda row: (row.get("order") or 0, row.get("operation_id") or ""))
     return rows
+
+
+def _conclusion_rows(selected):
+    """Compact assistant findings and final conclusion for the traced exchange."""
+    from .investigate import FINDING, clip_span
+    assistants = [e for e in sorted(selected, key=lambda ev: (_order(ev), ev["ref"].get("item", 0)))
+                  if e.get("kind") == "assistant_message" and len(message_segments.prose(e)) >= 20]
+    if not assistants:
+        return []
+    picked = []
+    seen = set()
+    for ev in reversed(assistants):
+        spans = message_segments.prose_spans(ev)
+        for _, raw in spans:
+            m = FINDING.search(raw)
+            if m:
+                text, _, _ = clip_span(raw, m)
+                picked.append((ev, text))
+                seen.add(_key(ev["ref"]))
+                break
+        if picked:
+            break
+    final = assistants[-1]
+    if _key(final["ref"]) not in seen:
+        picked.append((final, message_segments.prose(final)[:300]))
+    picked.sort(key=lambda pair: (_order(pair[0]), pair[0]["ref"].get("item", 0)))
+    return [{"section": "conclusion", "lane": ev.get("lane"), "branch": ev.get("branch"),
+             "order": ev.get("order"), "text": text, "ref": ev.get("ref"),
+             "cite": cite.token(ev["ref"])} for ev, text in picked]
 
 
 def _commit_rows(witnesses):
@@ -242,13 +282,15 @@ def episode(recording, target, operations, checkpoints, witnesses):
     comparisons = [item for checkpoint in checkpoints
                    for item in reconciliation.compare(checkpoint, reconciliation.claims_for(checkpoint), observations)]
     dimensions = reconciliation.summarize(observations, claims)
+    by_ref = {_key(event.get("ref")): event for event in selected if isinstance(event.get("ref"), dict)}
     rows = []
     if request is not None:
         rows.append({"section": "request", "lane": request.get("lane"), "branch": request.get("branch"),
                      "order": request.get("order"), "origin": request.get("request_origin"),
                      "basis": request_basis, "text": message_segments.prose(request)[:500] or None,
                      "ref": request.get("ref"), "cite": cite.token(request["ref"])})
-    rows += _operation_rows(operations, witnesses)
+    rows += _conclusion_rows(selected)
+    rows += _operation_rows(operations, witnesses, by_ref)
     checkpoint_rows = []
     for checkpoint in sorted(checkpoints, key=lambda row: (row.get("order") or 0, row.get("checkpoint_id") or "")):
         claim_rows = reconciliation.claims_for(checkpoint)

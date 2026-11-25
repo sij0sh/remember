@@ -2,6 +2,15 @@
 
 One entry per release. A release bumps `VERSION` and adds one entry here.
 
+## [0.5.24] - unreleased
+
+- Active-session exclusion now also covers Pi, which exports no session id: a recording with a recent mtime whose tail is an assistant message with an in-flight `toolCall` is dropped from every scan. `--include-current` opts back in.
+- `investigate` surfaces assistant-discovered findings (root causes, quirks, workarounds, hard constraints) as `pitfall` leads with kind `assistant_finding`, ranked above raw tool failures.
+- Noise suppression for transient edit mismatches, reads of missing files and probe commands (`ls`/`rg`/`git status`/…) that exit non-zero without a real error; failed-operation excerpts start at the first genuine error line.
+- `trace` gains `conclusion` rows (latest assistant finding plus the final message) and a `reason` field for failed operations; table output uses trace-specific columns and wider limits for text, command and reason.
+- `inspect` reads gitignored, unindexed repository files (e.g. `.agents/` artifacts) instead of reporting unresolved, and `activity` keeps rows whose paths are outside the repository.
+- `SKILL.md`: when-to-use/skip guidance, `--format table` on every operation, and dedented rules section.
+
 ## [0.5.23] - unreleased
 
 - Google Antigravity support: `antigravity` profile (v1) for `transcript_full.jsonl` under `~/.gemini/antigravity-cli/brain` and `~/.gemini/antigravity/brain`, added to `settings.json` and the default recording roots.

@@ -1,5 +1,7 @@
 """Shared bounded recording scan and lineage mechanics; no retained transcript data."""
+import json
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from .graph_store import canonical_path
@@ -7,6 +9,9 @@ from .reader import scan_file
 from .budget import check
 from .options import TEXT_BYTES_DEFAULT, TEXT_BYTES_AUTO_CAP
 from . import zstd
+
+# Pi does not export PI_SESSION_ID; detect an in-flight Pi session by recent mtime + active toolCall tail.
+ACTIVE_PI_WINDOW = 15.0
 
 def _size(path):
     try:
@@ -88,8 +93,56 @@ def env_sessions():
 def current_sessions(args):
     """Sessions to drop: --exclude-session plus the harness's own current-session id."""
     excluded = set(getattr(args, "exclude_session", []))
-    excluded.update(env_sessions())
+    if not getattr(args, "include_current", False):
+        excluded.update(env_sessions())
     return excluded
+
+
+def _is_active_pi_recording(path, now=None, window=ACTIVE_PI_WINDOW):
+    """True when ``path`` looks like the currently running Pi session (recent mtime + in-flight toolCall)."""
+    now = time.time() if now is None else now
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    age = now - st.st_mtime
+    if age < -5.0 or age > window:
+        return False
+    try:
+        with open(path, "rb") as stream:
+            size = st.st_size
+            stream.seek(max(0, size - 32768))
+            tail = stream.read(32768)
+    except OSError:
+        return False
+    lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    try:
+        last = json.loads(lines[-1].decode("utf-8", "replace"))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(last, dict) or last.get("type") != "message":
+        return False
+    msg = last.get("message")
+    if not isinstance(msg, dict) or msg.get("role") != "assistant":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "toolCall" for block in content)
+
+
+def active_pi_files(candidates, args, now=None):
+    """Heuristic active Pi recording to exclude when Pi did not export PI_SESSION_ID."""
+    if getattr(args, "include_current", False) or getattr(args, "recordings", None):
+        return ()
+    if env_sessions() or os.environ.get("PI_SESSION_FILE") or getattr(args, "exclude_session", None):
+        return ()
+    for harness, files, _ in candidates:
+        if harness == "pi" and files and _is_active_pi_recording(files[0], now=now):
+            return (files[0],)
+    return ()
 
 
 def scan_project(args, root, scope):
@@ -109,15 +162,18 @@ def scan_project(args, root, scope):
         candidates = candidate_files(options, scope)
     except ValueError as error:
         raise DiscoveryUnavailable(str(error)) from None
+    auto_pi = active_pi_files(candidates, args)
+    auto_pi_canon = {canonical_path(p) for p in auto_pi}
     recordings, groups = [], []
     for harness, files, counters in candidates:
         check()
+        files = [f for f in files if canonical_path(f) not in auto_pi_canon]
         scan = ScanOptions(harness=harness, max_scan_bytes=args.max_scan_bytes, max_events=args.max_events,
                            max_text_bytes=text_budget(policy, files, counters))
         recordings.extend(scan_group(files, scan, counters))
         groups.append({"harness": harness, **counters})
     keys = lineages(recordings)
-    excluded = current_sessions(args)
+    excluded = current_sessions(args) | set(auto_pi)
     kept = []
     for recording in recordings:
         if {recording["session"], recording["file"], keys[recording["file"]]} & excluded:
@@ -200,6 +256,8 @@ def scan_scheduled(args, root, scope, exclude_files=(), needles=()):
         candidates = candidate_files(options, scope)
     except ValueError as error:
         raise DiscoveryUnavailable(str(error)) from None
+    auto_pi = active_pi_files(candidates, args)
+    exclude_files = tuple(dict.fromkeys([*exclude_files, *auto_pi]))
     hits, probed = _probe(candidates, exclude_files, needles, args.max_scan_bytes)
     order, omitted = schedule(candidates, args.max_recordings, exclude_files, hits)
     counters = {h: c for h, _, c in candidates}
@@ -248,7 +306,7 @@ def scan_scheduled(args, root, scope, exclude_files=(), needles=()):
             c["scan_complete"] = False
         groups.append({"harness": harness, **c})
     keys = lineages(recordings)
-    excluded = current_sessions(args)
+    excluded = current_sessions(args) | set(auto_pi)
     kept = []
     for recording in recordings:
         if {recording["session"], recording["file"], keys[recording["file"]]} & excluded:

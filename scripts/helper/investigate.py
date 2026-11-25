@@ -28,9 +28,45 @@ REQUIRE = re.compile(r"\b(must|make sure|ensure|required|requirement|invariant|m
                      r"|(?:^|[.;:!?\n]\s*|\bplease\s+)(?:don'?t|do not|never|always)\b", re.I)
 CHOICE = re.compile(r"\b(decided|decision|we(?:'ll| will) (?:go with|use)|go with|chose|choose|instead of|"
                     r"rather than|trade-?off|opted|in favou?r of|prefer(?:red)? (?:to|over))\b", re.I)
+# Assistant-discovered runtime quirks, root causes, workarounds and hard constraints.
+FINDING = re.compile(r"\b(root cause|workaround|quirk|pitfall|gotcha|caveat|turns out|deadlocks?|ooms?|"
+                     r"out of memory|non-retryable|fails? when|only works? (?:if|when)|leaves? it unexpanded|"
+                     r"rejects? unknown|frees? nothing|never (?:emits?|returns?|frees?))\b", re.I)
+_TRANSIENT_EDIT = re.compile(r"could not find|not found in|no match|multiple matches|target.*not found|"
+                             r"oldtext|exact text|unique match", re.I)
+_PROBE_CMD = re.compile(r"^\s*(?:(?:cd|env)\s+\S+\s*&&\s*)?(?:ls|rg|grep|egrep|fgrep|diff|find|which|"
+                        r"command\s+-v|type|test|\[|git\s+(?:status|diff|log|ls-files|rev-parse))\b")
+_REAL_ERROR = re.compile(r"\b(traceback|error:|exception|fatal:|panic|assertionerror|oom|out of memory|"
+                         r"outofmemory|segfault|bus error|timed out|etimedout|eacces|permission denied|"
+                         r"syntaxerror|typeerror|valueerror|importerror|modulenotfounderror|failed)\b", re.I)
+_MISSING_FILE = re.compile(r"\bENOENT\b|no such file or directory", re.I)
 ACK = re.compile(r"^\W*(ok(ay)?|yes|yep|yeah|y|no|nope|thanks?( you)?|ty|go( ahead)?|continue|proceed|sure|do it|"
                  r"lgtm|great|nice|done|perfect|cool|good)\W*$", re.I)
 COPIED = re.compile(r'"schema_version"\s*:|"operation"\s*:\s*"(investigate|inspect|recall|signals|trace)"')
+
+
+def _noisy_failure(op, detail):
+    """Suppression reason for transient edit/probe failures that drown out real pitfalls, else None."""
+    tool = (op.get("tool") or op.get("action") or "").lower()
+    if tool in ("edit", "edit_file", "patch", "file_edit") and _TRANSIENT_EDIT.search(detail):
+        return "transient_edit_mismatch"
+    if tool in ("read", "read_file", "file_read") and _MISSING_FILE.search(detail):
+        return "probe_missing_file"
+    cmd = str(op.get("command") or "")
+    if op.get("action") == "command" and cmd and _PROBE_CMD.match(cmd) and not _REAL_ERROR.search(detail):
+        return "probe_command_exit"
+    return None
+
+
+def _failure_excerpt(detail):
+    """Focus a failed tool output on the first real error line instead of leading ls/header noise."""
+    if not detail:
+        return "no output"
+    m = _REAL_ERROR.search(detail)
+    if m and m.start() > 40:
+        start = max(0, m.start() - 24)
+        return ("..." if start else "") + detail[start:start + 160]
+    return detail[:160]
 
 
 prose = message_segments.prose
@@ -389,6 +425,12 @@ class Packet:
                     if not text:
                         continue
                     assistant_last[event.get("lane")] = event
+                    if not active and noise(text) is None:
+                        paths = turn_paths.get((recording["file"], event.get("turn")), ())
+                        span, found = first(FINDING)
+                        if found:
+                            self.add(event, "pitfall", "assistant_finding", "assistant_claim", text, found, recording,
+                                     paths, span=span, context=context)
                     span, found = first(CHOICE)
                     if found and not active:
                         later = next((h for h in humans if h.get("lane") == event.get("lane")
@@ -412,9 +454,13 @@ class Packet:
             if not detail and op.get("exit_code") == 1:
                 self.suppress("empty_nonzero_exit")  # grep/diff style "no match", not a failure lead
                 continue
+            noisy = _noisy_failure(op, detail)
+            if noisy:
+                self.suppress(noisy)
+                continue
             what = " ".join(str(op.get("command") or op.get("path") or op.get("action") or "").split())
             # Failure detail first: it is what the next attempt must avoid.
-            text = f"{op.get('tool') or op.get('action')} failed: {detail[:160] or 'no output'} | {what[:120]}"
+            text = f"{op.get('tool') or op.get('action')} failed: {_failure_excerpt(detail)} | {what[:120]}"
             self.add(event, "pitfall", "failed_operation", "tool_observation", text,
                      context=message_segments.visible_lines(result.get("text") if result else "") + "\n" + text,
                      recording=files.get(op.get("recording_id")), op_paths={op.get("repo_path"), op.get("path")},
@@ -651,10 +697,11 @@ def rank_key(lead):
     if current:
         return (-1,)
     applic = {"repository": 0, "historical_root": 1}.get(lead["applicability"], 2) + (3 if lead.get("active_context") else 0)
-    direct = 0 if lead["evidence"] in ("human", "tool_observation") else 1
+    direct = 0 if (lead["evidence"] in ("human", "tool_observation") or "assistant_finding" in lead["kinds"]) else 1
+    raw_tool_only = lead["kinds"] == ["failed_operation"]
     flagged = bool(lead["relations"].get("corrects") or lead["relations"].get("later_rejection")
-                   or "unverified_request" in lead["kinds"])
-    return (applic, tier(lead["match_bases"]), -lead["goal_hits"], direct, not flagged)
+                   or "unverified_request" in lead["kinds"] or "assistant_finding" in lead["kinds"])
+    return (applic, tier(lead["match_bases"]), -lead["goal_hits"], direct, raw_tool_only, not flagged)
 
 
 def order(leads, prior):

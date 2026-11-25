@@ -110,6 +110,7 @@ GRAPH_ARGS = (
     arg("--recordings", ops="map", action="append", default=[], help="Recording file or directory for orientation; repeatable"),
     arg("--project-root", ops="map", action="append", default=[], help="Additional recording project root; repeatable"),
     arg("--exclude-session", ops="map", action="append", default=[], help="Exclude session ID or recording path, including its lineage"),
+    arg("--include-current", ops="map", action="store_true", default=False, help="Include the currently active Pi session recording"),
     arg("text", ops="find", nargs="?"),
     arg("--word", ops="find", action="store_true", help="Match whole words only"),
     arg("--case-sensitive", ops="find", action="store_true", help="Match case exactly (default ignores case)"),
@@ -125,6 +126,7 @@ GRAPH_ARGS = (
     arg("--history-repo", ops=TARGET_HISTORY, action="append", default=[], help="Explicit old Git repository and path prefix: REPO=PREFIX"),
     arg("--root-map", ops=TARGET_HISTORY + ACTIVITY + TRACE, action="append", default=[], help="Rewrite recorded path prefix OLD=NEW; discovery uses --project-root"),
     arg("--exclude-session", ops=TARGET_HISTORY + ACTIVITY + TRACE, action="append", default=[], help="Exclude session ID or recording path, including its lineage"),
+    arg("--include-current", ops=TARGET_HISTORY + ACTIVITY + TRACE, action="store_true", default=False, help="Include the currently active Pi session recording"),
     arg("--no-sessions", ops=TARGET_HISTORY, action="store_true"),
     arg("--max-commits", ops=TARGET_HISTORY + TRACE, type=positive, default=30),
     arg("--max-recordings", ops=TARGET_HISTORY + ACTIVITY + TRACE, type=positive, default=25, help="Per-harness recording limit"),
@@ -145,6 +147,7 @@ GRAPH_ARGS = (
     arg("--plan", ops="query", action="store_true", help="Validate SQL and show dependencies before loading providers"),
     *(arg("--" + name, ops="query", action="append", default=[])
       for name in ("recordings", "project-root", "root-map", "exclude-session")),
+    arg("--include-current", ops="query", action="store_true", default=False, help="Include the currently active Pi session recording"),
     *(arg("--" + name, ops="query", type=positive)
       for name in ("max-recordings", "max-candidates", "max-scan-bytes", "max-events", "max-commits")),
     arg("table", ops="describe", nargs="?", help="Focused public table schema"),
@@ -161,6 +164,7 @@ GRAPH_ARGS = (
     arg("--no-sessions", ops=INVESTIGATE, action="store_true", help="Git only; views report not_searched"),
     *(arg("--" + name, ops=INVESTIGATE, action="append", default=[])
       for name in ("recordings", "project-root", "root-map", "exclude-session")),
+    arg("--include-current", ops=INVESTIGATE, action="store_true", default=False, help="Include the currently active Pi session recording"),
     *(arg("--" + name, ops=INVESTIGATE, type=positive)
       for name in ("max-recordings", "max-candidates", "max-scan-bytes", "max-events", "max-commits")),
     arg("--plan", ops=SIGNALS, action="store_true", help="Describe signal steps without loading providers"),
@@ -201,7 +205,7 @@ def derive(args):
     if args.action == "map":
         # A bare invocation has no map subparser, so its options are absent.
         for key, value in {"primer": None, "primer_bytes": 2048, "recordings": [], "project_root": [],
-                           "exclude_session": []}.items():
+                           "exclude_session": [], "include_current": False}.items():
             if not hasattr(args, key):
                 setattr(args, key, value)
         text_mode = not (args.path or args.kind or args.format or args.fields)

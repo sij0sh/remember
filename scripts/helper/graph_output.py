@@ -4,7 +4,7 @@ import json
 COLUMNS = ('section', 'kind', 'role', 'dimension', 'action', 'tool', 'outcome', 'relation',
            'path', 'paths', 'line', 'qualname', 'name', 'distance', 'via', 'consumers',
            'test_consumers', 'dependencies', 'callers', 'caller_files', 'lines', 'size',
-           'count', 'state', 'reason', 'files', 'sha', 'boundary_status', 'value',
+           'count', 'state', 'command', 'reason', 'files', 'sha', 'boundary_status', 'value',
            'subject', 'text', 'request')
 
 
@@ -49,21 +49,29 @@ def render_table(output, fields=None):
     rows = output['results']
     # First-appearance order: SQL rows keep their SELECT order, aliases and aggregates included.
     present = list(dict.fromkeys(k for row in rows for k in row))
-    if output.get('operation') == 'query':
+    op = output.get('operation')
+    if op == 'query':
         columns = fields or present
-    elif output.get('operation') == 'signals':
+    elif op == 'signals':
         wanted = ('section', 'categories', 'excerpt', 'count', 'tools', 'ref')
         columns = fields or [k for k in wanted if k in present] or present
-    elif output.get('operation') == 'investigate':
+    elif op == 'investigate':
         wanted = ('section', 'categories', 'excerpt', 'subject', 'paths', 'match_bases', 'ref')
         columns = fields or [k for k in wanted if k in present]
+    elif op == 'trace':
+        wanted = ('section', 'dimension', 'action', 'tool', 'outcome', 'relation', 'paths',
+                  'command', 'reason', 'sha', 'boundary_status', 'value', 'subject', 'text')
+        columns = fields or [k for k in wanted if k in present] or present
     else:
         columns = fields or [k for k in COLUMNS if k in present] or present
-    def cell(value):
+    def cell(value, col=None):
         text = json.dumps(value, ensure_ascii=True, separators=(',', ':')) if isinstance(value, (dict, list)) else str(value) if value is not None else ''
         text = text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-        return text[:77] + '...' if len(text) > 80 else text
-    values = [[cell(row.get(k)) for k in columns] for row in rows]
+        if op == 'show' and col == 'text':
+            return text
+        limit = 160 if (op == 'trace' and col in ('text', 'command', 'reason')) else 80
+        return text[:limit - 3] + '...' if len(text) > limit else text
+    values = [[cell(row.get(k), k) for k in columns] for row in rows]
     widths = [max(len(k), *(len(row[i]) for row in values)) if values else len(k) for i, k in enumerate(columns)]
     delivery = output.get('delivery', {})
     scope = output.get('scope', {})
